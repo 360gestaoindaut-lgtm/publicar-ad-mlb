@@ -1,0 +1,47 @@
+from decimal import Decimal
+from typing import Optional
+from uuid import uuid4
+from sqlalchemy import ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from app.models.base import Base, TimestampMixin
+
+
+class Listing(Base, TimestampMixin):
+    __tablename__ = "listings"
+
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    seller_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sellers.id"), nullable=False)
+    created_by: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    sku_external_id: Mapped[Optional[str]] = mapped_column(String(100))
+    sku_description: Mapped[str] = mapped_column(Text, nullable=False)
+    sku_brand: Mapped[str] = mapped_column(String(200), nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    stock_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    condition: Mapped[str] = mapped_column(String(10), nullable=False)
+    listing_type_id: Mapped[str] = mapped_column(String(20), nullable=False, default="gold_special")
+
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="draft")
+    ml_category_id: Mapped[Optional[str]] = mapped_column(String(20))
+    mlb_id: Mapped[Optional[str]] = mapped_column(String(20), unique=True)
+    selected_title: Mapped[Optional[str]] = mapped_column(Text)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+
+    seller: Mapped["Seller"] = relationship("Seller", back_populates="listings")
+    created_by_user: Mapped["User"] = relationship("User", foreign_keys=[created_by])
+    jobs: Mapped[list["ListingJob"]] = relationship(
+        "ListingJob", back_populates="listing", cascade="all, delete-orphan"
+    )
+    titles: Mapped[list["ListingTitle"]] = relationship(
+        "ListingTitle", back_populates="listing", cascade="all, delete-orphan"
+    )
+    attributes: Mapped[list["ListingAttribute"]] = relationship(
+        "ListingAttribute", back_populates="listing", cascade="all, delete-orphan"
+    )
+    images: Mapped[list["ListingImage"]] = relationship(
+        "ListingImage", back_populates="listing", cascade="all, delete-orphan"
+    )
+    description: Mapped[Optional["ListingDescription"]] = relationship(
+        "ListingDescription", back_populates="listing", uselist=False, cascade="all, delete-orphan"
+    )

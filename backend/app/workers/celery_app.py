@@ -1,0 +1,34 @@
+from celery import Celery
+from app.config import get_settings
+
+settings = get_settings()
+
+celery_app = Celery(
+    "publicar_ad_mlb",
+    broker=settings.redis_url,
+    backend=settings.redis_url,
+    include=[
+        "app.workers.tasks.ai_tasks",
+        "app.workers.tasks.category_tasks",
+        "app.workers.tasks.image_tasks",
+        "app.workers.tasks.publish_tasks",
+    ],
+)
+
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="America/Sao_Paulo",
+    enable_utc=True,
+    task_track_started=True,
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
+    result_expires=86400,
+    task_routes={
+        "app.workers.tasks.ai_tasks.*": {"queue": "ai"},
+        "app.workers.tasks.image_tasks.*": {"queue": "images"},
+        "app.workers.tasks.publish_tasks.*": {"queue": "publish"},
+        "app.workers.tasks.category_tasks.*": {"queue": "default"},
+    },
+)
