@@ -32,9 +32,6 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     claude_model: str = "claude-haiku-4-5-20251001"
 
-    # FreePik
-    freepik_api_key: str = ""
-
     # Cloudflare R2
     r2_account_id: str = ""
     r2_access_key_id: str = ""

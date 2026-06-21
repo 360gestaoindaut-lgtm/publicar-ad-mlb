@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, Any
 from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel, field_validator
@@ -53,3 +53,70 @@ class ListingPage(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class TitleOption(BaseModel):
+    id: UUID
+    title_text: str
+    ai_score: Optional[Decimal]
+    selected: bool
+
+    model_config = {"from_attributes": True}
+
+
+class AttributeOut(BaseModel):
+    id: UUID
+    attribute_id: str
+    attribute_name: str
+    attribute_type: str
+    is_required: bool
+    value_id: Optional[str]
+    value_name: Optional[str]
+    source: str
+    allowed_values: Optional[list[Any]]
+
+    model_config = {"from_attributes": True}
+
+
+class JobOut(BaseModel):
+    id: UUID
+    job_type: str
+    celery_task_id: Optional[str]
+    status: str
+    error_message: Optional[str]
+    attempts: int
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ImageOut(BaseModel):
+    id: UUID
+    url_r2: Optional[str]
+    ml_picture_id: Optional[str]
+    status: str
+    approved: bool
+    sort_order: int
+
+    model_config = {"from_attributes": True}
+
+
+class ImageApproveRequest(BaseModel):
+    approved_ids: list[UUID]
+
+
+class ListingDetail(ListingSummary):
+    sku_description: str
+    price: Decimal
+    stock_quantity: int
+    condition: str
+    listing_type_id: str
+    ml_category_id: Optional[str]
+    error_message: Optional[str]
+    description_html: Optional[str] = None
+    titles: list[TitleOption] = []
+    attributes: list[AttributeOut] = []
+    images: list[ImageOut] = []
+    jobs: list[JobOut] = []

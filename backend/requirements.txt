@@ -29,3 +29,10 @@ slowapi==0.1.9
 
 # Utilities
 python-multipart==0.0.19
+
+# Image pipeline (Fase 3)
+boto3==1.35.99
+Pillow==11.1.0
+
+# JSON repair (resiliência contra resposta malformada da IA)
+json-repair==0.30.3
