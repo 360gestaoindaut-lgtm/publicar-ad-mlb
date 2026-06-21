@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.dependencies import get_db, get_current_user, get_active_seller
 from app.models.batch_import import BatchImport, BatchImportRow
-from app.schemas.batch_import import BatchImportDetail, BatchImportOut
+from app.schemas.batch_import import BatchImportDetail, BatchImportOut, BatchImportRowOut
 from app.services.batch_import_service import normalize_row, parse_csv, parse_xlsx, validate_row
 from uuid import UUID
 
@@ -61,7 +61,7 @@ async def upload_batch(
             sku=normalized["sku"] or f"row_{i}",
             status="failed" if error else "pending",
             error_message=error,
-            raw_data=normalized,
+            raw_data=raw,  # armazena strings originais; worker re-normaliza (Decimal não é JSON-serializável)
         ))
 
     await db.commit()

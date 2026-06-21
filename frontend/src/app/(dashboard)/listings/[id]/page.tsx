@@ -124,7 +124,7 @@ export default function ListingDetailPage() {
       <div className="mb-6">
         <Link
           href="/listings"
-          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-4"
+          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-foreground mb-4"
         >
           <ArrowLeft className="w-4 h-4" />
           Todos os anúncios
@@ -132,7 +132,7 @@ export default function ListingDetailPage() {
 
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <h1 className="text-xl font-bold text-slate-900 leading-snug truncate">
+            <h1 className="text-xl font-bold text-foreground leading-snug truncate">
               {listing.selected_title || listing.sku_brand}
             </h1>
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
@@ -142,7 +142,7 @@ export default function ListingDetailPage() {
               </span>
               {listing.mlb_id && (
                 <a
-                  href={`https://www.mercadolivre.com.br/p/${listing.mlb_id}`}
+                  href={`https://produto.mercadolivre.com.br/${listing.mlb_id.replace(/^MLB/, "MLB-")}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
@@ -181,7 +181,7 @@ export default function ListingDetailPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-10 h-10 animate-spin text-purple-500 mx-auto mb-4" />
-            <p className="font-medium text-slate-700">
+            <p className="font-medium text-foreground">
               {STATUS_LABELS[status]}
             </p>
             <p className="text-sm text-slate-500 mt-1">
@@ -292,7 +292,7 @@ export default function ListingDetailPage() {
             <p className="font-semibold text-green-900 text-lg">Anúncio publicado!</p>
             {listing.mlb_id && (
               <a
-                href={`https://www.mercadolivre.com.br/p/${listing.mlb_id}`}
+                href={`https://produto.mercadolivre.com.br/${listing.mlb_id.replace(/^MLB/, "MLB-")}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-blue-600 hover:underline text-sm mt-3"

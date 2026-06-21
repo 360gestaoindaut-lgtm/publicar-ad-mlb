@@ -57,6 +57,7 @@ async def _load_detail(db: AsyncSession, listing: Listing) -> ListingDetail:
         sku_brand=listing.sku_brand,
         selected_title=listing.selected_title,
         status=listing.status,
+        created_via=listing.created_via,
         mlb_id=listing.mlb_id,
         created_at=listing.created_at,
         updated_at=listing.updated_at,

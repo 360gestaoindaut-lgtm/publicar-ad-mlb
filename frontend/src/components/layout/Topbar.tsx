@@ -61,7 +61,7 @@ function SellerSelector() {
 
   if (sellers.length === 1) {
     return (
-      <div className="flex items-center gap-2 text-sm text-slate-600">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <ShoppingBag className="w-4 h-4 text-yellow-500" />
         <span className="font-medium">{activeSeller.ml_nickname}</span>
       </div>
@@ -72,16 +72,16 @@ function SellerSelector() {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 text-sm text-slate-700 hover:text-slate-900 font-medium px-2 py-1 rounded-md hover:bg-slate-100 transition-colors"
+        className="flex items-center gap-2 text-sm text-foreground font-medium px-2 py-1 rounded-md hover:bg-accent transition-colors"
       >
         <ShoppingBag className="w-4 h-4 text-yellow-500" />
         <span>{activeSeller.ml_nickname}</span>
-        <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+        <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1">
-          <p className="text-xs text-slate-400 px-3 py-1.5 font-medium uppercase tracking-wide">
+        <div className="absolute right-0 top-full mt-1 w-64 bg-popover border border-border rounded-lg shadow-lg z-50 py-1">
+          <p className="text-xs text-muted-foreground px-3 py-1.5 font-medium uppercase tracking-wide">
             Conta ativa
           </p>
           {sellers.map((seller) => (
@@ -91,19 +91,19 @@ function SellerSelector() {
                 setActiveSeller(seller)
                 setOpen(false)
               }}
-              className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-slate-50 transition-colors"
+              className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-accent transition-colors"
             >
-              <span className="font-medium text-slate-800">{seller.ml_nickname}</span>
+              <span className="font-medium text-foreground">{seller.ml_nickname}</span>
               {seller.id === activeSeller.id && (
                 <Check className="w-4 h-4 text-green-600" />
               )}
             </button>
           ))}
-          <div className="border-t border-slate-100 mt-1 pt-1">
+          <div className="border-t border-border mt-1 pt-1">
             <Link
               href="/settings"
               onClick={() => setOpen(false)}
-              className="block px-3 py-2 text-sm text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors"
+              className="block px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             >
               + Conectar nova conta
             </Link>
@@ -120,15 +120,15 @@ export function Topbar() {
   const isListingsRoot = pathname === "/listings"
 
   return (
-    <header className="h-14 border-b border-slate-200 bg-white flex items-center justify-between px-6 flex-shrink-0">
+    <header className="h-14 border-b border-border bg-background flex items-center justify-between px-6 flex-shrink-0">
       <nav className="flex items-center gap-1.5 text-sm">
         {breadcrumbs.map((crumb, i) => (
           <span key={crumb.href} className="flex items-center gap-1.5">
-            {i > 0 && <span className="text-slate-400">/</span>}
+            {i > 0 && <span className="text-muted-foreground">/</span>}
             {i === breadcrumbs.length - 1 ? (
-              <span className="font-medium text-slate-900">{crumb.label}</span>
+              <span className="font-medium text-foreground">{crumb.label}</span>
             ) : (
-              <Link href={crumb.href} className="text-slate-500 hover:text-slate-700">
+              <Link href={crumb.href} className="text-muted-foreground hover:text-foreground">
                 {crumb.label}
               </Link>
             )}

@@ -97,7 +97,16 @@ class PublishService:
             )
 
         if resp.status_code == 400:
-            raise MLValidationError(resp.text[:1200])
+            error_text = resp.text[:1200]
+            try:
+                err_data = resp.json()
+                causes = err_data.get("cause", [])
+                msgs = [c["message"] for c in causes if c.get("message")]
+                if msgs:
+                    error_text = "ML rejeitou o anúncio: " + " | ".join(msgs)
+            except Exception:
+                pass
+            raise MLValidationError(error_text)
         if resp.status_code >= 400:
             raise RuntimeError(f"ML criar item {resp.status_code}: {resp.text[:600]}")
 

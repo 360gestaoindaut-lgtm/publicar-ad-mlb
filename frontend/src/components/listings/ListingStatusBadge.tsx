@@ -23,17 +23,24 @@ const STATUS_VARIANTS: Record<
   failed: "destructive",
 }
 
+const C = {
+  green:  "bg-green-100  text-green-800  border-green-200  dark:bg-green-900/30  dark:text-green-400  dark:border-green-800",
+  blue:   "bg-blue-100   text-blue-800   border-blue-200   dark:bg-blue-900/30   dark:text-blue-400   dark:border-blue-800",
+  yellow: "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800",
+  purple: "bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800",
+}
+
 const STATUS_COLORS: Partial<Record<ListingStatus, string>> = {
-  published: "bg-green-100 text-green-800 border-green-200",
-  ready_to_publish: "bg-blue-100 text-blue-800 border-blue-200",
-  pending_title_approval: "bg-yellow-100 text-yellow-800 border-yellow-200",
-  pending_seller_attributes: "bg-yellow-100 text-yellow-800 border-yellow-200",
-  pending_image_approval: "bg-yellow-100 text-yellow-800 border-yellow-200",
-  generating_title: "bg-purple-100 text-purple-800 border-purple-200",
-  generating_images: "bg-purple-100 text-purple-800 border-purple-200",
-  generating_description: "bg-purple-100 text-purple-800 border-purple-200",
-  predicting_category: "bg-purple-100 text-purple-800 border-purple-200",
-  publishing: "bg-purple-100 text-purple-800 border-purple-200",
+  published:                C.green,
+  ready_to_publish:         C.blue,
+  pending_title_approval:   C.yellow,
+  pending_seller_attributes: C.yellow,
+  pending_image_approval:   C.yellow,
+  generating_title:         C.purple,
+  generating_images:        C.purple,
+  generating_description:   C.purple,
+  predicting_category:      C.purple,
+  publishing:               C.purple,
 }
 
 interface Props {

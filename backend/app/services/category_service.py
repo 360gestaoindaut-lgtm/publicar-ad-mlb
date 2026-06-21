@@ -1,10 +1,9 @@
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from app.models.listing import Listing
 from app.models.listing_attribute import ListingAttribute
 from app.models.seller import Seller
-from app.core.security import decrypt_value
 
 _ML_API = "https://api.mercadolibre.com"
 
@@ -16,16 +15,17 @@ class CategoryService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def predict_and_save(self, listing: Listing) -> None:
+    async def predict_and_save(self, listing: Listing, ean: str | None = None) -> None:
+        from app.services.publish_service import get_valid_access_token
         result = await self.db.execute(select(Seller).where(Seller.id == listing.seller_id))
         seller = result.scalar_one()
-        token = decrypt_value(seller.access_token_enc)
+        token = await get_valid_access_token(seller, self.db)
 
         category_id = await self._predict_category(listing.selected_title, token)
         listing.ml_category_id = category_id
 
         raw_attrs = await self._get_attributes(category_id, token)
-        await self._save_attributes(listing, raw_attrs)
+        await self._save_attributes(listing, raw_attrs, ean=ean)
 
     async def _predict_category(self, title: str, token: str) -> str:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -49,17 +49,26 @@ class CategoryService:
         resp.raise_for_status()
         return resp.json()
 
-    async def _save_attributes(self, listing: Listing, raw_attrs: list[dict]) -> None:
-        prefill = {
+    async def _save_attributes(self, listing: Listing, raw_attrs: list[dict], ean: str | None = None) -> None:
+        # Remove atributos de tentativas anteriores — garante idempotência em retries
+        await self.db.execute(
+            delete(ListingAttribute).where(ListingAttribute.listing_id == listing.id)
+        )
+
+        prefill: dict[str, str | None] = {
             "BRAND": listing.sku_brand,
             "ITEM_CONDITION": "Novo" if listing.condition == "new" else "Usado",
         }
+        # EAN da planilha preenche automaticamente o atributo GTIN do ML
+        if ean:
+            prefill["GTIN"] = ean
 
         has_unfilled_required = False
 
         for attr in raw_attrs:
             attr_id: str = attr["id"]
-            is_required: bool = bool(attr.get("tags", {}).get("required", False))
+            tags = attr.get("tags", {})
+            is_required: bool = bool(tags.get("required", False) or tags.get("conditional_required", False))
             attr_type: str = attr.get("value_type", "string")
             allowed: list | None = attr.get("values") or None
 
@@ -85,7 +94,7 @@ class CategoryService:
                 is_required=is_required,
                 value_id=value_id,
                 value_name=value_name,
-                source="ai",
+                source="ai" if attr_id not in ("GTIN",) or not ean else "seller",
                 allowed_values=allowed,
             ))
 

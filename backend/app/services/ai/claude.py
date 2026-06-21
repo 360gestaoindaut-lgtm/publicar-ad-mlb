@@ -23,7 +23,9 @@ class ClaudeProvider(AIProvider):
         prompt = build_title_prompt(sku_description, sku_brand, condition, ean, seo_context, batch_mode)
         text = await self._call(prompt, max_tokens=200 if batch_mode else 500, temperature=0.6)
         if batch_mode:
-            title = text.strip().replace('"', '').replace("'", '')[:60]
+            from app.services.ai.gemini import _extract_json
+            parsed = json.loads(_extract_json(text))
+            title = parsed.get("title", "").strip()[:60]
             return [{"title": title, "score": None, "rationale": "batch_auto"}]
         text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         return json.loads(text)["titles"]

@@ -92,7 +92,7 @@ function SellerCard({ entry }: { entry: SellerDashboardEntry }) {
         )}
 
         {isActive && (
-          <Button asChild variant="ghost" size="sm" className="mt-3 px-0 text-slate-500 hover:text-slate-800">
+          <Button asChild variant="ghost" size="sm" className="mt-3 px-0 text-slate-500 hover:text-foreground">
             <Link href="/listings">Ver anúncios desta conta →</Link>
           </Button>
         )}
@@ -112,7 +112,7 @@ export default function DashboardPage() {
     <div>
       <div className="mb-6 flex items-center gap-2">
         <LayoutDashboard className="w-5 h-5 text-slate-600" />
-        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
       </div>
 
       {isLoading ? (

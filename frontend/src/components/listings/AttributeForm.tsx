@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
-import { Loader2 } from "lucide-react"
+import { ChevronDown, Loader2 } from "lucide-react"
 import type { AttributeOut } from "@/types/listing"
 
 interface AttributeValue {
@@ -25,28 +25,29 @@ export function AttributeForm({ listingId, attributes }: Props) {
   const router = useRouter()
   const queryClient = useQueryClient()
 
-  const requiredAttributes = attributes.filter((a) => a.is_required)
+  const required = attributes.filter((a) => a.is_required)
+  const optional = attributes.filter((a) => !a.is_required)
 
   const initialValues: Record<string, AttributeValue> = {}
-  requiredAttributes.forEach((attr) => {
+  attributes.forEach((attr) => {
     initialValues[attr.attribute_id] = {
-      value_id: attr.value_id || undefined,
-      value_name: attr.value_name || "",
+      value_id: attr.value_id ?? undefined,
+      value_name: attr.value_name ?? "",
     }
   })
 
   const [values, setValues] = useState<Record<string, AttributeValue>>(initialValues)
+  const [optionalOpen, setOptionalOpen] = useState(false)
 
   const mutation = useMutation({
     mutationFn: () => {
-      const payload = requiredAttributes.map((attr) => {
-        const val = values[attr.attribute_id]
-        return {
+      const payload = attributes
+        .filter((attr) => values[attr.attribute_id]?.value_name?.trim())
+        .map((attr) => ({
           attribute_id: attr.attribute_id,
-          value_id: val?.value_id,
-          value_name: val?.value_name || "",
-        }
-      })
+          value_id: values[attr.attribute_id]?.value_id,
+          value_name: values[attr.attribute_id]?.value_name ?? "",
+        }))
       return submitAttributes(listingId, payload)
     },
     onSuccess: () => {
@@ -60,46 +61,29 @@ export function AttributeForm({ listingId, attributes }: Props) {
     },
   })
 
-  const handleSelectChange = (attributeId: string, optionId: string, optionName: string) => {
-    setValues((prev) => ({
-      ...prev,
-      [attributeId]: { value_id: optionId, value_name: optionName },
-    }))
+  const handleSelectChange = (attrId: string, optId: string, optName: string) => {
+    setValues((prev) => ({ ...prev, [attrId]: { value_id: optId, value_name: optName } }))
   }
 
-  const handleTextChange = (attributeId: string, text: string) => {
-    setValues((prev) => ({
-      ...prev,
-      [attributeId]: { value_name: text },
-    }))
+  const handleTextChange = (attrId: string, text: string) => {
+    setValues((prev) => ({ ...prev, [attrId]: { value_name: text } }))
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-
-    const missing = requiredAttributes.filter((attr) => {
-      const val = values[attr.attribute_id]
-      return !val?.value_name?.trim()
-    })
-
+    const missing = required.filter((attr) => !values[attr.attribute_id]?.value_name?.trim())
     if (missing.length > 0) {
       toast.error(`Preencha os campos obrigatórios: ${missing.map((a) => a.attribute_name).join(", ")}`)
       return
     }
-
     mutation.mutate()
   }
 
-  if (requiredAttributes.length === 0) {
+  if (attributes.length === 0) {
     return (
       <div className="text-center py-12 text-slate-500">
-        <p>Nenhum atributo obrigatório para preencher.</p>
-        <Button
-          className="mt-4"
-          onClick={() => {
-            mutation.mutate()
-          }}
-        >
+        <p>Nenhum atributo para preencher nesta categoria.</p>
+        <Button className="mt-4" onClick={() => mutation.mutate()}>
           Continuar
         </Button>
       </div>
@@ -107,51 +91,63 @@ export function AttributeForm({ listingId, attributes }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <p className="text-sm text-slate-600">
-        Preencha os atributos obrigatórios para a categoria do seu produto.
-      </p>
-
-      {requiredAttributes.map((attr) => (
-        <div key={attr.attribute_id} className="space-y-2">
-          <Label htmlFor={attr.attribute_id}>
-            {attr.attribute_name}
-            <span className="text-red-500 ml-1">*</span>
-          </Label>
-
-          {attr.allowed_values && attr.allowed_values.length > 0 ? (
-            <select
-              id={attr.attribute_id}
-              value={values[attr.attribute_id]?.value_id || ""}
-              onChange={(e) => {
-                const selected = attr.allowed_values!.find((o) => o.id === e.target.value)
-                if (selected) {
-                  handleSelectChange(attr.attribute_id, selected.id, selected.name)
-                }
-              }}
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            >
-              <option value="">Selecione...</option>
-              {attr.allowed_values.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <Input
-              id={attr.attribute_id}
-              value={values[attr.attribute_id]?.value_name || ""}
-              onChange={(e) => handleTextChange(attr.attribute_id, e.target.value)}
-              placeholder={`Digite ${attr.attribute_name.toLowerCase()}`}
+    <form onSubmit={handleSubmit} className="space-y-8">
+      {required.length > 0 && (
+        <section className="space-y-4">
+          <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest">
+            Obrigatórios
+          </p>
+          {required.map((attr) => (
+            <AttributeField
+              key={attr.attribute_id}
+              attr={attr}
+              value={values[attr.attribute_id]}
+              onSelectChange={handleSelectChange}
+              onTextChange={handleTextChange}
             />
-          )}
+          ))}
+        </section>
+      )}
 
-          {attr.source === "ai" && (
-            <p className="text-xs text-slate-400">Sugerido pela IA — confirme ou altere</p>
-          )}
-        </div>
-      ))}
+      {optional.length > 0 && (
+        <section>
+          <button
+            type="button"
+            onClick={() => setOptionalOpen((o) => !o)}
+            className="flex items-center justify-between w-full group"
+          >
+            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest">
+              Opcionais
+              <span className="ml-2 text-slate-400 font-normal normal-case tracking-normal">
+                ({optional.length})
+              </span>
+            </p>
+            <ChevronDown
+              className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+                optionalOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+
+          <div
+            className={`overflow-hidden transition-all duration-200 ${
+              optionalOpen ? "max-h-[9999px] opacity-100 mt-4" : "max-h-0 opacity-0"
+            }`}
+          >
+            <div className="space-y-4">
+              {optional.map((attr) => (
+                <AttributeField
+                  key={attr.attribute_id}
+                  attr={attr}
+                  value={values[attr.attribute_id]}
+                  onSelectChange={handleSelectChange}
+                  onTextChange={handleTextChange}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       <Button type="submit" disabled={mutation.isPending} className="w-full">
         {mutation.isPending ? (
@@ -164,5 +160,58 @@ export function AttributeForm({ listingId, attributes }: Props) {
         )}
       </Button>
     </form>
+  )
+}
+
+interface FieldProps {
+  attr: AttributeOut
+  value: AttributeValue | undefined
+  onSelectChange: (id: string, optId: string, optName: string) => void
+  onTextChange: (id: string, text: string) => void
+}
+
+function AttributeField({ attr, value, onSelectChange, onTextChange }: FieldProps) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <Label htmlFor={attr.attribute_id} className="leading-none">
+          {attr.attribute_name}
+          {attr.is_required && <span className="text-red-500 ml-1">*</span>}
+        </Label>
+        <span className="text-[10px] font-mono text-slate-400 select-all">
+          {attr.attribute_id}
+        </span>
+      </div>
+
+      {attr.allowed_values && attr.allowed_values.length > 0 ? (
+        <select
+          id={attr.attribute_id}
+          value={value?.value_id ?? ""}
+          onChange={(e) => {
+            const selected = attr.allowed_values!.find((o) => o.id === e.target.value)
+            if (selected) onSelectChange(attr.attribute_id, selected.id, selected.name)
+          }}
+          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          <option value="">Selecione...</option>
+          {attr.allowed_values.map((opt) => (
+            <option key={opt.id} value={opt.id}>
+              {opt.name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <Input
+          id={attr.attribute_id}
+          value={value?.value_name ?? ""}
+          onChange={(e) => onTextChange(attr.attribute_id, e.target.value)}
+          placeholder={`Digite ${attr.attribute_name.toLowerCase()}`}
+        />
+      )}
+
+      {attr.source === "ai" && attr.value_name && (
+        <p className="text-xs text-slate-400">Sugerido pela IA — confirme ou altere</p>
+      )}
+    </div>
   )
 }

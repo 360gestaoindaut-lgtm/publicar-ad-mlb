@@ -47,7 +47,7 @@ export default function SettingsPage() {
   return (
     <div className="max-w-xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Configurações</h1>
+        <h1 className="text-2xl font-bold text-foreground">Configurações</h1>
         <p className="text-sm text-slate-500 mt-1">
           Gerencie as contas do Mercado Livre conectadas.
         </p>
@@ -110,13 +110,13 @@ export default function SettingsPage() {
                   <div
                     key={seller.id}
                     className={`border rounded-lg p-4 transition-colors ${
-                      isActive ? "border-green-300 bg-green-50" : "border-slate-200 bg-white"
+                      isActive ? "border-green-300 bg-green-50 dark:bg-green-950/30" : "border-border bg-card"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0">
                         <CheckCircle className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-green-600" : "text-slate-400"}`} />
-                        <span className="font-medium text-slate-900 truncate">{seller.ml_nickname}</span>
+                        <span className="font-medium text-foreground truncate">{seller.ml_nickname}</span>
                         {isActive && (
                           <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full flex-shrink-0">
                             Ativa
@@ -158,7 +158,7 @@ export default function SettingsPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="mt-3 text-slate-500 hover:text-slate-700 w-full justify-start px-0"
+                      className="mt-3 text-slate-500 hover:text-foreground w-full justify-start px-0"
                       onClick={handleConnect}
                       disabled={connecting}
                     >

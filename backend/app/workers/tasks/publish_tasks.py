@@ -72,6 +72,9 @@ def publish_listing(self, listing_id: str) -> dict:
         asyncio.run(_set_failed(listing_id, str(exc)))
         raise
     except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_set_failed(listing_id, str(exc)))
+            raise
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 10)
 
 

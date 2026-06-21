@@ -50,7 +50,7 @@ export function ListingPreview({ listing }: Props) {
       {/* Image carousel */}
       {approvedImages.length > 0 && (
         <div className="relative">
-          <div className="aspect-square bg-slate-100 rounded-lg overflow-hidden">
+          <div className="aspect-square bg-muted rounded-lg overflow-hidden">
             {(() => {
               const url = getImageUrl(approvedImages[currentImage])
               return url ? (
@@ -73,7 +73,7 @@ export function ListingPreview({ listing }: Props) {
                 onClick={() =>
                   setCurrentImage((prev) => (prev - 1 + approvedImages.length) % approvedImages.length)
                 }
-                className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white rounded-full p-1 shadow"
+                className="absolute left-2 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-background rounded-full p-1 shadow"
               >
                 <ChevronLeft className="w-5 h-5" />
               </button>
@@ -81,7 +81,7 @@ export function ListingPreview({ listing }: Props) {
                 onClick={() =>
                   setCurrentImage((prev) => (prev + 1) % approvedImages.length)
                 }
-                className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white rounded-full p-1 shadow"
+                className="absolute right-2 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-background rounded-full p-1 shadow"
               >
                 <ChevronRight className="w-5 h-5" />
               </button>
@@ -103,7 +103,7 @@ export function ListingPreview({ listing }: Props) {
 
       {/* Title */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 leading-snug">
+        <h2 className="text-lg font-semibold text-foreground leading-snug">
           {listing.selected_title || "Título não definido"}
         </h2>
         <p className="text-sm text-slate-500 mt-1">
@@ -114,7 +114,7 @@ export function ListingPreview({ listing }: Props) {
       {/* Price */}
       <Card>
         <CardContent className="p-4">
-          <p className="text-2xl font-bold text-slate-900">
+          <p className="text-2xl font-bold text-foreground">
             R$ {formatPrice(listing.price)}
           </p>
           <p className="text-sm text-slate-500 mt-1">
@@ -127,7 +127,7 @@ export function ListingPreview({ listing }: Props) {
       {/* Description */}
       {listing.description_html && (
         <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Descrição</h3>
+          <h3 className="text-sm font-semibold text-muted-foreground mb-2">Descrição</h3>
           <div
             className="text-sm text-slate-600 prose prose-sm max-w-none border rounded-lg p-3"
             dangerouslySetInnerHTML={{ __html: listing.description_html }}
@@ -138,12 +138,12 @@ export function ListingPreview({ listing }: Props) {
       {/* Attributes */}
       {filledAttributes.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Atributos</h3>
+          <h3 className="text-sm font-semibold text-muted-foreground mb-2">Atributos</h3>
           <div className="space-y-1">
             {filledAttributes.map((attr) => (
-              <div key={attr.id} className="flex justify-between text-sm py-1 border-b border-slate-100">
+              <div key={attr.id} className="flex justify-between text-sm py-1 border-b border-border">
                 <span className="text-slate-500">{attr.attribute_name}</span>
-                <span className="font-medium text-slate-900">{attr.value_name}</span>
+                <span className="font-medium text-foreground">{attr.value_name}</span>
               </div>
             ))}
           </div>

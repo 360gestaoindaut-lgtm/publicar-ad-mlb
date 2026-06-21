@@ -9,6 +9,7 @@ celery_app = Celery(
     backend=settings.redis_url,
     include=[
         "app.workers.tasks.ai_tasks",
+        "app.workers.tasks.batch_tasks",
         "app.workers.tasks.category_tasks",
         "app.workers.tasks.image_tasks",
         "app.workers.tasks.publish_tasks",
@@ -27,6 +28,7 @@ celery_app.conf.update(
     result_expires=86400,
     task_routes={
         "app.workers.tasks.ai_tasks.*": {"queue": "ai"},
+        "app.workers.tasks.batch_tasks.*": {"queue": "default"},
         "app.workers.tasks.image_tasks.*": {"queue": "images"},
         "app.workers.tasks.publish_tasks.*": {"queue": "publish"},
         "app.workers.tasks.category_tasks.*": {"queue": "default"},

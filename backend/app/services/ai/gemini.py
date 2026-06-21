@@ -47,7 +47,8 @@ class GeminiProvider(AIProvider):
         prompt = build_title_prompt(sku_description, sku_brand, condition, ean, seo_context, batch_mode)
         text = await self._call(prompt, max_tokens=500 if batch_mode else 2000, temperature=0.6)
         if batch_mode:
-            title = text.strip().replace('"', '').replace("'", '')[:60]
+            parsed = json.loads(_extract_json(text))
+            title = parsed.get("title", "").strip()[:60]
             return [{"title": title, "score": None, "rationale": "batch_auto"}]
         return json.loads(_extract_json(text))["titles"]
 
@@ -71,6 +72,6 @@ class GeminiProvider(AIProvider):
                 },
             )
         response.raise_for_status()
-        # Concatena todos os parts (modelo thinking divide a resposta em múltiplos parts)
         parts = response.json()["candidates"][0]["content"]["parts"]
-        return "".join(p.get("text", "") for p in parts)
+        # Filtra parts de "thinking" (gemini-2.5-flash/-pro emite pensamentos separados)
+        return "".join(p.get("text", "") for p in parts if not p.get("thought", False))

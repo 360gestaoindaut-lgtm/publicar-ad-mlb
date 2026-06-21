@@ -47,7 +47,7 @@ async def _generate_title_async(
 
         if batch_mode:
             from app.workers.tasks.category_tasks import predict_category
-            predict_category.delay(listing_id)
+            predict_category.delay(listing_id, ean=ean)
 
     return {"listing_id": listing_id, "titles_generated": len(titles), "batch_mode": batch_mode}
 
@@ -91,10 +91,28 @@ async def _generate_description_async(listing_id: str) -> dict:
         else:
             db.add(ListingDescription(listing_id=listing.id, description_html=description_html))
 
-        listing.status = "ready_to_publish"
-        await db.commit()
+        if listing.created_via == "batch":
+            listing.status = "publishing"
+            await db.commit()
+            from app.workers.tasks.publish_tasks import publish_listing
+            publish_listing.delay(listing_id)
+        else:
+            listing.status = "ready_to_publish"
+            await db.commit()
 
     return {"listing_id": listing_id}
+
+
+async def _mark_failed(listing_id: str) -> None:
+    from app.database import worker_session
+    from app.models.listing import Listing
+    from sqlalchemy import select
+
+    async with worker_session() as db:
+        listing = (await db.execute(select(Listing).where(Listing.id == listing_id))).scalar_one_or_none()
+        if listing:
+            listing.status = "failed"
+            await db.commit()
 
 
 @celery_app.task(name="app.workers.tasks.ai_tasks.generate_title", bind=True, max_retries=3)
@@ -108,6 +126,9 @@ def generate_title(
     try:
         return asyncio.run(_generate_title_async(listing_id, batch_mode=batch_mode, ean=ean, seo_context=seo_context))
     except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(listing_id))
+            raise
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 5)
 
 
@@ -116,4 +137,7 @@ def generate_description(self, listing_id: str) -> dict:
     try:
         return asyncio.run(_generate_description_async(listing_id))
     except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(listing_id))
+            raise
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 5)

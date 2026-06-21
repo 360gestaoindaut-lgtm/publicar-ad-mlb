@@ -21,6 +21,7 @@ export interface ListingSummary {
   sku_brand: string
   selected_title: string | null
   status: ListingStatus
+  created_via: "manual" | "batch"
   mlb_id: string | null
   created_at: string
   updated_at: string

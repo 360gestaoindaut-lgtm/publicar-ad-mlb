@@ -15,6 +15,7 @@ def build_title_prompt(
 Gere EXATAMENTE 1 título otimizado para o produto abaixo.
 
 REGRAS OBRIGATÓRIAS:
+- Idioma: PORTUGUÊS DO BRASIL (nunca inglês, nunca espanhol)
 - Máximo 60 caracteres (incluindo espaços)
 - Estrutura: [tipo do produto] [marca] [modelo/referência] [atributo mais buscado]
 - Não use: pontuação desnecessária, maiúsculas em excesso, artigos (o, a, os, as)
@@ -29,7 +30,8 @@ Condição: {condition_pt}
 {ean_line}
 {seo_line}
 
-Responda EXCLUSIVAMENTE com o título (string simples, sem JSON, sem aspas, sem explicação)."""
+Responda EXCLUSIVAMENTE em JSON válido no formato abaixo, sem texto antes ou depois, sem markdown:
+{{"title": "título em português aqui"}}"""
 
     return f"""Você é um especialista em SEO para o Mercado Livre Brasil.
 Crie 3 variações de título para um anúncio do produto abaixo.

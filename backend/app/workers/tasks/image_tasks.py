@@ -45,8 +45,14 @@ async def _generate_images_async(listing_id: str) -> dict:
                         approved=True,
                         sort_order=i,
                     ))
-                listing.status = "pending_image_approval"
-                await db.commit()
+                if listing.created_via == "batch":
+                    listing.status = "generating_description"
+                    await db.commit()
+                    from app.workers.tasks.ai_tasks import generate_description
+                    generate_description.delay(listing_id)
+                else:
+                    listing.status = "pending_image_approval"
+                    await db.commit()
                 return {"listing_id": listing_id, "images_reused": len(existing)}
 
         # Sem imagens existentes — gera com IA
@@ -94,10 +100,43 @@ async def _generate_images_async(listing_id: str) -> dict:
         if saved == 0:
             raise RuntimeError("Nenhuma imagem válida foi gerada pelo Gemini Imagen")
 
-        listing.status = "pending_image_approval"
-        await db.commit()
+        if listing.created_via == "batch":
+            # Auto-aprovar todas as imagens geradas e suas entradas no índice SKU→imagem
+            images = (await db.execute(
+                select(ListingImage).where(ListingImage.listing_id == listing.id)
+            )).scalars().all()
+            for img in images:
+                img.approved = True
+            if sku:
+                prod_imgs = (await db.execute(
+                    select(ProductImage).where(
+                        ProductImage.seller_id == listing.seller_id,
+                        ProductImage.sku == sku,
+                    )
+                )).scalars().all()
+                for pi in prod_imgs:
+                    pi.is_approved = True
+            listing.status = "generating_description"
+            await db.commit()
+            from app.workers.tasks.ai_tasks import generate_description
+            generate_description.delay(listing_id)
+        else:
+            listing.status = "pending_image_approval"
+            await db.commit()
 
     return {"listing_id": listing_id, "images_saved": saved}
+
+
+async def _mark_failed(listing_id: str, error: str) -> None:
+    from app.database import worker_session
+    from app.models.listing import Listing
+    from sqlalchemy import select
+    async with worker_session() as db:
+        listing = (await db.execute(select(Listing).where(Listing.id == listing_id))).scalar_one_or_none()
+        if listing:
+            listing.status = "failed"
+            listing.error_message = error[:500] if hasattr(listing, "error_message") else None
+            await db.commit()
 
 
 @celery_app.task(name="app.workers.tasks.image_tasks.generate_images", bind=True, max_retries=2)
@@ -105,6 +144,9 @@ def generate_images(self, listing_id: str) -> dict:
     try:
         return asyncio.run(_generate_images_async(listing_id))
     except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(listing_id, str(exc)))
+            raise
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 5)
 
 

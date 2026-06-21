@@ -23,6 +23,7 @@ class Listing(Base, TimestampMixin):
     listing_type_id: Mapped[str] = mapped_column(String(20), nullable=False, default="gold_special")
 
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="draft")
+    created_via: Mapped[str] = mapped_column(String(10), nullable=False, default="manual")
     ml_category_id: Mapped[Optional[str]] = mapped_column(String(20))
     mlb_id: Mapped[Optional[str]] = mapped_column(String(20), unique=True)
     selected_title: Mapped[Optional[str]] = mapped_column(Text)

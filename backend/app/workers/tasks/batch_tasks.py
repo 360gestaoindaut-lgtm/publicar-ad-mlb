@@ -54,6 +54,7 @@ async def _process_batch_async(batch_id: str) -> dict:
                     condition=normalized["condicao"],
                     listing_type_id=normalized["tipo_anuncio"],
                     status="generating_title",
+                    created_via="batch",
                 )
                 db.add(listing)
                 await db.flush()

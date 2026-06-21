@@ -5,6 +5,7 @@ from sqlalchemy import select, update, func
 from app.models.listing import Listing
 from app.models.listing_title import ListingTitle
 from app.models.listing_attribute import ListingAttribute
+from app.models.listing_description import ListingDescription
 from app.models.listing_image import ListingImage
 from app.models.listing_job import ListingJob
 from app.models.user import User
@@ -91,8 +92,14 @@ class ListingService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Retry disponível apenas para anúncios com falha",
             )
-        listing.status = "generating_title"
         listing.error_message = None
+        # Se a categoria já foi prevista, basta o seller corrigir os atributos;
+        # não é necessário reger todo o pipeline desde o início.
+        if listing.ml_category_id:
+            listing.status = "pending_seller_attributes"
+            await self.db.commit()
+            return
+        listing.status = "generating_title"
         await self.db.commit()
         from app.workers.tasks.ai_tasks import generate_title
         generate_title.delay(str(listing.id))
@@ -144,8 +151,34 @@ class ListingService:
                 attr.value_name = item.get("value_name")
                 attr.source = "seller"
 
-        listing.status = "pending_description"
+        # Se imagens aprovadas e descrição já existem (retry após erro de publicação),
+        # pula direto para ready_to_publish sem regenerar tudo.
+        approved_img = (await self.db.execute(
+            select(ListingImage).where(
+                ListingImage.listing_id == listing.id,
+                ListingImage.approved == True,
+            )
+        )).scalars().first()
+        description = (await self.db.execute(
+            select(ListingDescription).where(ListingDescription.listing_id == listing.id)
+        )).scalar_one_or_none()
+
+        new_status = "ready_to_publish" if (approved_img and description) else "pending_description"
+        listing.status = new_status
         await self.db.commit()
+
+        # Batch: avança automaticamente sem esperar o seller clicar
+        if listing.created_via == "batch":
+            if new_status == "pending_description":
+                listing.status = "generating_images"
+                await self.db.commit()
+                from app.workers.tasks.image_tasks import generate_images
+                generate_images.delay(str(listing.id))
+            elif new_status == "ready_to_publish":
+                listing.status = "publishing"
+                await self.db.commit()
+                from app.workers.tasks.publish_tasks import publish_listing
+                publish_listing.delay(str(listing.id))
 
     async def trigger_image_generation(self, listing: Listing) -> None:
         if listing.status != "pending_description":

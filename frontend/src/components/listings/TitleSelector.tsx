@@ -66,7 +66,7 @@ export function TitleSelector({ listingId, titles }: Props) {
           <CardContent className="p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1">
-                <p className="text-sm font-medium text-slate-900 leading-relaxed">
+                <p className="text-sm font-medium text-foreground leading-relaxed">
                   {title.title_text}
                 </p>
                 {title.ai_score !== null && (

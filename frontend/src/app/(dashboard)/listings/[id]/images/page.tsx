@@ -32,12 +32,12 @@ export default function ImagesPage() {
       <div className="mb-6">
         <Link
           href={`/listings/${id}`}
-          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-4"
+          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-foreground mb-4"
         >
           <ArrowLeft className="w-4 h-4" />
           Voltar ao anúncio
         </Link>
-        <h1 className="text-2xl font-bold text-slate-900">Aprovar imagens</h1>
+        <h1 className="text-2xl font-bold text-foreground">Aprovar imagens</h1>
         <p className="text-sm text-slate-500 mt-1">
           Selecione as imagens geradas pela IA que serão usadas no anúncio.
         </p>

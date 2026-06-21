@@ -3,19 +3,22 @@
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { List, Settings, LogOut, Tag, ChevronLeft, ChevronRight, LayoutDashboard } from "lucide-react"
+import { List, Settings, LogOut, Tag, ChevronLeft, ChevronRight, LayoutDashboard, Upload, Sun, Moon } from "lucide-react"
 import { clearAuth } from "@/lib/api/client"
+import { useTheme } from "@/contexts/ThemeContext"
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
   { href: "/listings", label: "Anúncios", icon: List },
+  { href: "/import", label: "Importar", icon: Upload },
   { href: "/settings", label: "Configurações", icon: Settings },
 ]
 
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
+  const { theme, toggleTheme } = useTheme()
 
   const handleLogout = () => {
     clearAuth()
@@ -68,7 +71,7 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Logout + Toggle */}
+      {/* Logout + Theme + Toggle */}
       <div className="p-2 border-t border-slate-700 space-y-1">
         <button
           onClick={handleLogout}
@@ -82,6 +85,25 @@ export function Sidebar() {
             }`}
           >
             Sair
+          </span>
+        </button>
+
+        <button
+          onClick={toggleTheme}
+          title={theme === "dark" ? "Mudar para tema claro" : "Mudar para tema escuro"}
+          className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors w-full"
+        >
+          {theme === "dark" ? (
+            <Sun className="w-4 h-4 flex-shrink-0" />
+          ) : (
+            <Moon className="w-4 h-4 flex-shrink-0" />
+          )}
+          <span
+            className={`whitespace-nowrap overflow-hidden transition-[max-width,opacity] duration-300 ease-in-out ${
+              collapsed ? "max-w-0 opacity-0" : "max-w-xs opacity-100"
+            }`}
+          >
+            {theme === "dark" ? "Tema claro" : "Tema escuro"}
           </span>
         </button>
 

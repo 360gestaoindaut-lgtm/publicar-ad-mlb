@@ -86,11 +86,11 @@ export function PipelineBoard() {
         return (
           <div
             key={col.title}
-            className={`flex-shrink-0 w-72 bg-slate-50 rounded-lg border-t-4 ${col.colorClass} border border-slate-200 p-3`}
+            className={`flex-shrink-0 w-72 bg-muted/40 rounded-lg border-t-4 ${col.colorClass} border border-border p-3`}
           >
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-sm text-slate-700">{col.title}</h3>
-              <span className="text-xs bg-slate-200 text-slate-600 rounded-full px-2 py-0.5 font-medium">
+              <h3 className="font-semibold text-sm text-foreground">{col.title}</h3>
+              <span className="text-xs bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-medium">
                 {items.length}
               </span>
             </div>
