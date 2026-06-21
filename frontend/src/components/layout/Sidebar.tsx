@@ -3,10 +3,11 @@
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { List, Settings, LogOut, Tag, ChevronLeft, ChevronRight } from "lucide-react"
+import { List, Settings, LogOut, Tag, ChevronLeft, ChevronRight, LayoutDashboard } from "lucide-react"
 import { clearAuth } from "@/lib/api/client"
 
 const NAV_ITEMS = [
+  { href: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
   { href: "/listings", label: "Anúncios", icon: List },
   { href: "/settings", label: "Configurações", icon: Settings },
 ]
@@ -41,8 +42,8 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 p-2 space-y-1">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-          const isActive = pathname === href || pathname.startsWith(href + "/")
+        {NAV_ITEMS.map(({ href, label, icon: Icon, exact }) => {
+          const isActive = exact ? pathname === href : (pathname === href || pathname.startsWith(href + "/"))
           return (
             <Link
               key={href}

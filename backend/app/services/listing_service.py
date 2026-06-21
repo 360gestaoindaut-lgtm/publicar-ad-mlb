@@ -8,6 +8,7 @@ from app.models.listing_attribute import ListingAttribute
 from app.models.listing_image import ListingImage
 from app.models.listing_job import ListingJob
 from app.models.user import User
+from app.models.seller import Seller
 from app.schemas.listing import ListingCreate, ListingPage, ListingSummary
 
 
@@ -15,9 +16,9 @@ class ListingService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def create(self, data: ListingCreate, user: User) -> Listing:
+    async def create(self, data: ListingCreate, user: User, seller: Seller) -> Listing:
         listing = Listing(
-            seller_id=user.seller_id,
+            seller_id=seller.id,
             created_by=user.id,
             **data.model_dump(),
         )

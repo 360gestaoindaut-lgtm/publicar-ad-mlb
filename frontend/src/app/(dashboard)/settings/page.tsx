@@ -1,10 +1,12 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
-import { getMLStatus, getMLConnectUrl } from "@/lib/api/auth"
+import { listSellers } from "@/lib/api/sellers"
+import { getMLConnectUrl } from "@/lib/api/auth"
+import { useSeller } from "@/contexts/SellerContext"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Loader2, CheckCircle, XCircle, ExternalLink, ShoppingBag } from "lucide-react"
+import { Loader2, CheckCircle, ExternalLink, ShoppingBag, Plus, Check } from "lucide-react"
 import { toast } from "sonner"
 import { useState } from "react"
 import { format } from "date-fns"
@@ -12,11 +14,13 @@ import { ptBR } from "date-fns/locale"
 
 export default function SettingsPage() {
   const [connecting, setConnecting] = useState(false)
+  const { activeSeller, setActiveSeller, reload } = useSeller()
 
-  const { data: mlStatus, isLoading } = useQuery({
-    queryKey: ["ml-status"],
-    queryFn: getMLStatus,
+  const { data: sellers = [], isLoading } = useQuery({
+    queryKey: ["sellers"],
+    queryFn: listSellers,
     retry: 1,
+    refetchOnWindowFocus: true,
   })
 
   const handleConnect = async () => {
@@ -31,58 +35,60 @@ export default function SettingsPage() {
     }
   }
 
+  // Quando voltar do OAuth com ml_connected=true, recarrega a lista de sellers
+  if (typeof window !== "undefined") {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("ml_connected") === "true") {
+      reload()
+      window.history.replaceState({}, "", "/settings")
+    }
+  }
+
   return (
     <div className="max-w-xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Configurações</h1>
         <p className="text-sm text-slate-500 mt-1">
-          Gerencie a integração com o Mercado Livre.
+          Gerencie as contas do Mercado Livre conectadas.
         </p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ShoppingBag className="w-5 h-5 text-yellow-500" />
-            Conta Mercado Livre
-          </CardTitle>
-          <CardDescription>
-            Conecte sua conta do Mercado Livre para publicar anúncios.
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <ShoppingBag className="w-5 h-5 text-yellow-500" />
+                Contas Mercado Livre
+              </CardTitle>
+              <CardDescription className="mt-1">
+                Cada conta conectada pode ter seus próprios anúncios gerenciados independentemente.
+              </CardDescription>
+            </div>
+            <Button size="sm" onClick={handleConnect} disabled={connecting}>
+              {connecting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <Plus className="w-4 h-4 mr-1" />
+                  Conectar conta
+                </>
+              )}
+            </Button>
+          </div>
         </CardHeader>
+
         <CardContent>
           {isLoading ? (
             <div className="flex items-center gap-2 text-slate-500">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="text-sm">Verificando conexão...</span>
+              <span className="text-sm">Carregando contas...</span>
             </div>
-          ) : mlStatus?.connected ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-green-600">
-                <CheckCircle className="w-5 h-5" />
-                <span className="font-medium">Conta conectada</span>
-              </div>
-
-              <div className="bg-slate-50 rounded-lg p-4 space-y-2">
-                {mlStatus.ml_nickname && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-500">Usuário</span>
-                    <span className="font-medium">{mlStatus.ml_nickname}</span>
-                  </div>
-                )}
-                {mlStatus.token_expires_at && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-500">Token expira em</span>
-                    <span className="font-medium">
-                      {format(new Date(mlStatus.token_expires_at), "dd/MM/yyyy HH:mm", {
-                        locale: ptBR,
-                      })}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <Button variant="outline" onClick={handleConnect} disabled={connecting}>
+          ) : sellers.length === 0 ? (
+            <div className="text-center py-8">
+              <ShoppingBag className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+              <p className="text-slate-500 text-sm">Nenhuma conta conectada ainda.</p>
+              <Button className="mt-4" onClick={handleConnect} disabled={connecting}>
                 {connecting ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -91,36 +97,77 @@ export default function SettingsPage() {
                 ) : (
                   <>
                     <ExternalLink className="w-4 h-4 mr-2" />
-                    Reconectar conta
+                    Conectar conta Mercado Livre
                   </>
                 )}
               </Button>
             </div>
           ) : (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-slate-500">
-                <XCircle className="w-5 h-5 text-slate-400" />
-                <span className="text-sm">Nenhuma conta conectada</span>
-              </div>
+            <div className="space-y-3">
+              {sellers.map((seller) => {
+                const isActive = activeSeller?.id === seller.id
+                return (
+                  <div
+                    key={seller.id}
+                    className={`border rounded-lg p-4 transition-colors ${
+                      isActive ? "border-green-300 bg-green-50" : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <CheckCircle className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-green-600" : "text-slate-400"}`} />
+                        <span className="font-medium text-slate-900 truncate">{seller.ml_nickname}</span>
+                        {isActive && (
+                          <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                            Ativa
+                          </span>
+                        )}
+                      </div>
+                      {!isActive && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setActiveSeller(seller)}
+                          className="flex-shrink-0"
+                        >
+                          <Check className="w-3.5 h-3.5 mr-1" />
+                          Usar esta
+                        </Button>
+                      )}
+                    </div>
 
-              <p className="text-sm text-slate-600">
-                Para publicar anúncios no Mercado Livre, você precisa autorizar o aplicativo a
-                acessar sua conta.
-              </p>
+                    <div className="mt-3 space-y-1 text-sm text-slate-500">
+                      <div className="flex justify-between">
+                        <span>ML User ID</span>
+                        <span className="font-mono text-xs">{seller.ml_user_id}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Token expira em</span>
+                        <span>
+                          {format(new Date(seller.token_expires_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Conectada em</span>
+                        <span>
+                          {format(new Date(seller.granted_at), "dd/MM/yyyy", { locale: ptBR })}
+                        </span>
+                      </div>
+                    </div>
 
-              <Button onClick={handleConnect} disabled={connecting} className="w-full">
-                {connecting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Redirecionando para o Mercado Livre...
-                  </>
-                ) : (
-                  <>
-                    <ShoppingBag className="w-4 h-4 mr-2" />
-                    Conectar conta Mercado Livre
-                  </>
-                )}
-              </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-3 text-slate-500 hover:text-slate-700 w-full justify-start px-0"
+                      onClick={handleConnect}
+                      disabled={connecting}
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+                      Reconectar / renovar token
+                    </Button>
+                  </div>
+                )
+              })}
             </div>
           )}
         </CardContent>

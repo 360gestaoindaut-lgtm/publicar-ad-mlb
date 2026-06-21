@@ -18,5 +18,7 @@ class Seller(Base, TimestampMixin):
     token_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    users: Mapped[list["User"]] = relationship("User", back_populates="seller")
+    user_accesses: Mapped[list["UserSellerAccess"]] = relationship(
+        "UserSellerAccess", back_populates="seller", cascade="all, delete-orphan"
+    )
     listings: Mapped[list["Listing"]] = relationship("Listing", back_populates="seller")

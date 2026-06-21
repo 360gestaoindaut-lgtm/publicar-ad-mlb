@@ -1,5 +1,5 @@
 from typing import AsyncGenerator
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,3 +43,52 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+async def get_active_seller(
+    x_seller_id: str | None = Header(default=None, alias="X-Seller-ID"),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve e valida a conta ML ativa para o request atual.
+
+    O frontend envia X-Seller-ID com o seller selecionado no seletor de conta.
+    Validamos que o user autenticado tem acesso a esse seller antes de prosseguir.
+    """
+    from app.models.seller import Seller
+    from app.models.user_seller_access import UserSellerAccess
+
+    if not x_seller_id:
+        # Se não passou o header, retorna o primeiro seller disponível para o usuário
+        result = await db.execute(
+            select(Seller)
+            .join(UserSellerAccess, UserSellerAccess.seller_id == Seller.id)
+            .where(UserSellerAccess.user_id == current_user.id, Seller.is_active == True)
+            .order_by(UserSellerAccess.granted_at.asc())
+            .limit(1)
+        )
+        seller = result.scalar_one_or_none()
+        if not seller:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Nenhuma conta do Mercado Livre conectada. Acesse Configurações para conectar.",
+            )
+        return seller
+
+    # Valida que o user tem acesso ao seller solicitado
+    result = await db.execute(
+        select(Seller)
+        .join(UserSellerAccess, UserSellerAccess.seller_id == Seller.id)
+        .where(
+            UserSellerAccess.user_id == current_user.id,
+            Seller.id == x_seller_id,
+            Seller.is_active == True,
+        )
+    )
+    seller = result.scalar_one_or_none()
+    if not seller:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso negado a esta conta do Mercado Livre.",
+        )
+    return seller

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.core.security import encrypt_value
 from app.models.seller import Seller
+from app.models.user_seller_access import UserSellerAccess
 
 settings = get_settings()
 
@@ -14,15 +15,15 @@ ML_AUTH_URL = "https://auth.mercadolivre.com.br/authorization"
 ML_TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
 ML_USER_URL = "https://api.mercadolibre.com/users/me"
 
-# Estado anti-CSRF em memória — substituir por Redis na Fase 1 final
-_pending_states: dict[str, bool] = {}
+# state → user_id: vincula o callback OAuth ao usuário que iniciou o fluxo
+_pending_states: dict[str, str] = {}
 
 
 class MLOAuthService:
 
-    def get_authorization_url(self) -> str:
+    def get_authorization_url(self, user_id: str) -> str:
         state = str(uuid.uuid4())
-        _pending_states[state] = True
+        _pending_states[state] = user_id
         return (
             f"{ML_AUTH_URL}"
             f"?response_type=code"
@@ -32,12 +33,12 @@ class MLOAuthService:
         )
 
     async def handle_callback(self, code: str, state: str, db: AsyncSession) -> None:
-        if state not in _pending_states:
+        user_id = _pending_states.pop(state, None)
+        if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="State inválido ou expirado",
             )
-        del _pending_states[state]
 
         token_data = await self._exchange_code(code)
         user_data = await self._get_ml_user(token_data["access_token"])
@@ -67,6 +68,17 @@ class MLOAuthService:
                 token_expires_at=expires_at,
             )
             db.add(seller)
+            await db.flush()  # obtém o seller.id antes do commit
+
+        # Garante que o usuário tem acesso a este seller
+        existing_access = await db.execute(
+            select(UserSellerAccess).where(
+                UserSellerAccess.user_id == user_id,
+                UserSellerAccess.seller_id == seller.id,
+            )
+        )
+        if not existing_access.scalar_one_or_none():
+            db.add(UserSellerAccess(user_id=user_id, seller_id=seller.id, role="admin"))
 
         await db.commit()
 
