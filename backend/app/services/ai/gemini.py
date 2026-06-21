@@ -35,9 +35,20 @@ class GeminiProvider(AIProvider):
     def __init__(self) -> None:
         self.settings = get_settings()
 
-    async def generate_titles(self, sku_description: str, sku_brand: str, condition: str) -> list[dict]:
-        prompt = build_title_prompt(sku_description, sku_brand, condition)
-        text = await self._call(prompt, max_tokens=2000, temperature=0.7)
+    async def generate_titles(
+        self,
+        sku_description: str,
+        sku_brand: str,
+        condition: str,
+        ean: str | None = None,
+        seo_context: str | None = None,
+        batch_mode: bool = False,
+    ) -> list[dict]:
+        prompt = build_title_prompt(sku_description, sku_brand, condition, ean, seo_context, batch_mode)
+        text = await self._call(prompt, max_tokens=500 if batch_mode else 2000, temperature=0.6)
+        if batch_mode:
+            title = text.strip().replace('"', '').replace("'", '')[:60]
+            return [{"title": title, "score": None, "rationale": "batch_auto"}]
         return json.loads(_extract_json(text))["titles"]
 
     async def generate_description(self, listing_data: dict) -> str:

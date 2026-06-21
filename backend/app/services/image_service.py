@@ -12,8 +12,17 @@ _IMAGEN_URL = (
     "imagen-4.0-fast-generate-001:predict"
 )
 ML_PICTURES_URL = "https://api.mercadolibre.com/pictures/items/upload"
-_MIN_DIMENSION = 500
-_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+_MIN_DIMENSION = 500       # ML minimum accepted
+_RECOMMENDED_DIM = 1024    # Gemini Imagen 4 output (acceptable for ML, below ideal 1200)
+_MAX_BYTES = 10 * 1024 * 1024
+
+# Explicitly tell Imagen what NOT to generate — reduces hallucination significantly
+_NEGATIVE_PROMPT = (
+    "people, hands, animals, plants, leaves, trees, flowers, nature, outdoor, indoor scene, "
+    "room, furniture, table, floor, text overlay, watermark, logo, price tag, banner, "
+    "promotional text, multiple products, collage, lifestyle photo, shadow, reflection, "
+    "colored background, gradient, blur, bokeh, abstract elements"
+)
 
 
 class GeminiImageService:
@@ -31,6 +40,7 @@ class GeminiImageService:
                         "sampleCount": 4,
                         "aspectRatio": "1:1",
                         "personGeneration": "DONT_ALLOW",
+                        "negativePrompt": _NEGATIVE_PROMPT,
                     },
                 },
             )

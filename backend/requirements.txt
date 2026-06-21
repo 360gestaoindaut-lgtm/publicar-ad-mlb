@@ -36,3 +36,6 @@ Pillow==11.1.0
 
 # JSON repair (resiliência contra resposta malformada da IA)
 json-repair==0.30.3
+
+# Batch import CSV/XLSX
+openpyxl==3.1.5

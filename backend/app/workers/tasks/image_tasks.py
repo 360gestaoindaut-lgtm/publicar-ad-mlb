@@ -10,19 +10,46 @@ async def _generate_images_async(listing_id: str) -> dict:
     from app.database import worker_session
     from app.models.listing import Listing
     from app.models.listing_image import ListingImage
+    from app.models.product_image import ProductImage
     from app.models.seller import Seller
     from app.services.ai.service import get_ai_provider
-    from app.services.image_service import (
-        GeminiImageService,
-        MLPictureService,
-        validate_image,
-    )
+    from app.services.image_service import GeminiImageService, MLPictureService, validate_image
 
     async with worker_session() as db:
         listing = (
             await db.execute(select(Listing).where(Listing.id == listing_id))
         ).scalar_one()
 
+        sku = listing.sku_external_id or ""
+
+        # Verifica se já existem imagens aprovadas para este SKU neste seller
+        if sku:
+            existing = (
+                await db.execute(
+                    select(ProductImage)
+                    .where(
+                        ProductImage.seller_id == listing.seller_id,
+                        ProductImage.sku == sku,
+                        ProductImage.is_approved == True,
+                    )
+                    .order_by(ProductImage.created_at.asc())
+                )
+            ).scalars().all()
+
+            if existing:
+                for i, pi in enumerate(existing):
+                    db.add(ListingImage(
+                        listing_id=listing.id,
+                        ml_picture_id=pi.ml_picture_id,
+                        status="uploaded",
+                        approved=True,
+                        sort_order=i,
+                    ))
+                listing.status = "pending_image_approval"
+                await db.commit()
+                return {"listing_id": listing_id, "images_reused": len(existing)}
+
+        # Sem imagens existentes — gera com IA
         seller = (
             await db.execute(select(Seller).where(Seller.id == listing.seller_id))
         ).scalar_one()
@@ -36,7 +63,6 @@ async def _generate_images_async(listing_id: str) -> dict:
         )
 
         raw_images = await GeminiImageService().generate(prompt)
-
         ml_pic = MLPictureService()
         saved = 0
 
@@ -52,6 +78,17 @@ async def _generate_images_async(listing_id: str) -> dict:
                 status="uploaded",
                 sort_order=saved,
             ))
+
+            # Registra no índice SKU→imagem (não aprovada ainda)
+            if sku:
+                db.add(ProductImage(
+                    seller_id=listing.seller_id,
+                    sku=sku,
+                    ml_picture_id=ml_picture_id,
+                    source="gemini",
+                    is_approved=False,
+                ))
+
             saved += 1
 
         if saved == 0:

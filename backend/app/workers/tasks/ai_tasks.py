@@ -2,7 +2,12 @@ import asyncio
 from app.workers.celery_app import celery_app
 
 
-async def _generate_title_async(listing_id: str) -> dict:
+async def _generate_title_async(
+    listing_id: str,
+    batch_mode: bool = False,
+    ean: str | None = None,
+    seo_context: str | None = None,
+) -> dict:
     from app.database import worker_session
     from app.models.listing import Listing
     from app.models.listing_title import ListingTitle
@@ -18,6 +23,9 @@ async def _generate_title_async(listing_id: str) -> dict:
             sku_description=listing.sku_description,
             sku_brand=listing.sku_brand,
             condition=listing.condition,
+            ean=ean,
+            seo_context=seo_context,
+            batch_mode=batch_mode,
         )
 
         for t in titles:
@@ -25,12 +33,23 @@ async def _generate_title_async(listing_id: str) -> dict:
                 listing_id=listing.id,
                 title_text=t["title"],
                 ai_score=t.get("score"),
+                selected=batch_mode,
             ))
 
-        listing.status = "pending_title_approval"
+        if batch_mode:
+            # Auto-seleciona o único título gerado e avança para predição de categoria
+            listing.selected_title = titles[0]["title"]
+            listing.status = "predicting_category"
+        else:
+            listing.status = "pending_title_approval"
+
         await db.commit()
 
-    return {"listing_id": listing_id, "titles_generated": len(titles)}
+        if batch_mode:
+            from app.workers.tasks.category_tasks import predict_category
+            predict_category.delay(listing_id)
+
+    return {"listing_id": listing_id, "titles_generated": len(titles), "batch_mode": batch_mode}
 
 
 async def _generate_description_async(listing_id: str) -> dict:
@@ -79,9 +98,15 @@ async def _generate_description_async(listing_id: str) -> dict:
 
 
 @celery_app.task(name="app.workers.tasks.ai_tasks.generate_title", bind=True, max_retries=3)
-def generate_title(self, listing_id: str) -> dict:
+def generate_title(
+    self,
+    listing_id: str,
+    batch_mode: bool = False,
+    ean: str | None = None,
+    seo_context: str | None = None,
+) -> dict:
     try:
-        return asyncio.run(_generate_title_async(listing_id))
+        return asyncio.run(_generate_title_async(listing_id, batch_mode=batch_mode, ean=ean, seo_context=seo_context))
     except Exception as exc:
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 5)
 

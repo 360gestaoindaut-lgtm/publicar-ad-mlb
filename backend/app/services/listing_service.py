@@ -176,15 +176,32 @@ class ListingService:
 
         approved_set = set(approved_ids)
         order_map = {uid: i for i, uid in enumerate(approved_ids)}
+        approved_ml_ids = []
 
         for img in images:
             if img.id in approved_set:
                 img.approved = True
                 img.sort_order = order_map[img.id]
                 img.status = "approved"
+                if img.ml_picture_id:
+                    approved_ml_ids.append(img.ml_picture_id)
             else:
                 img.approved = False
                 img.status = "rejected"
+
+        # Marca as imagens aprovadas no índice SKU→imagem
+        if approved_ml_ids and listing.sku_external_id:
+            from app.models.product_image import ProductImage
+            from sqlalchemy import update as sa_update
+            await self.db.execute(
+                sa_update(ProductImage)
+                .where(
+                    ProductImage.seller_id == listing.seller_id,
+                    ProductImage.sku == listing.sku_external_id,
+                    ProductImage.ml_picture_id.in_(approved_ml_ids),
+                )
+                .values(is_approved=True)
+            )
 
         listing.status = "generating_description"
         await self.db.commit()

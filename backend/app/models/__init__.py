@@ -7,8 +7,11 @@ from app.models.listing_title import ListingTitle
 from app.models.listing_attribute import ListingAttribute
 from app.models.listing_image import ListingImage
 from app.models.listing_description import ListingDescription
+from app.models.product_image import ProductImage
+from app.models.batch_import import BatchImport, BatchImportRow
 
 __all__ = [
     "Seller", "User", "UserSellerAccess", "Listing", "ListingJob",
     "ListingTitle", "ListingAttribute", "ListingImage", "ListingDescription",
+    "ProductImage", "BatchImport", "BatchImportRow",
 ]
