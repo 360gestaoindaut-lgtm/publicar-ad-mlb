@@ -43,6 +43,7 @@ export async function downloadProductTemplate() {
     { key: "sku",           width: 14 },
     { key: "descricao",     width: 48 },
     { key: "marca",         width: 16 },
+    { key: "modelo",        width: 22 },
     { key: "ean",           width: 18 },
     { key: "ncm",           width: 13 },
     { key: "origemfiscal",  width: 14 },
@@ -59,7 +60,7 @@ export async function downloadProductTemplate() {
 
   // Cabeçalho
   const headerRow = ws.addRow([
-    "sku", "descricao", "marca", "ean", "ncm",
+    "sku", "descricao", "marca", "modelo", "ean", "ncm",
     "origemfiscal", "icmscst", "icmsrate", "piscst", "cofinscst",
     "pesokg", "comprimentocm", "larguracm", "alturacm", "custo",
   ])
@@ -70,20 +71,20 @@ export async function downloadProductTemplate() {
 
   // Linha de exemplo
   const exampleRow = ws.addRow([
-    "SKU001", "Smartphone Samsung Galaxy A54 128GB Preto", "Samsung",
+    "SKU001", "Smartphone Samsung Galaxy A54 128GB Preto", "Samsung", "Galaxy A54 128GB",
     "7892509082679", "8517120019",
     "0", "00", "12", "07", "07",
     "0,185", "16", "8", "1", "1299,90",
   ])
   exampleRow.eachCell((cell) => { cell.font = FONT })
 
-  // Colunas EAN (4) e NCM (5): texto para linhas preenchíveis
-  applyTextColumn(ws, 4, 1, 201)
+  // Colunas EAN (5) e NCM (6): texto para linhas preenchíveis (modelo agora na col 4)
   applyTextColumn(ws, 5, 1, 201)
+  applyTextColumn(ws, 6, 1, 201)
 
   // Fonte padrão para células vazias das demais colunas
-  for (let c = 1; c <= 15; c++) {
-    if (c === 4 || c === 5) continue
+  for (let c = 1; c <= 16; c++) {
+    if (c === 5 || c === 6) continue
     for (let r = 3; r <= 201; r++) {
       ws.getCell(r, c).font = FONT
     }

@@ -69,6 +69,7 @@ async def _process_batch_async(batch_id: str) -> dict:
                     sku_external_id=product.sku,
                     sku_description=product.description,
                     sku_brand=product.brand or "Sem marca",
+                    sku_model=product.model or None,
                     package_weight_kg=product.weight_kg,
                     package_length_cm=product.length_cm,
                     package_width_cm=product.width_cm,

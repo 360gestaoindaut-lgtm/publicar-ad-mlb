@@ -18,6 +18,7 @@ class Listing(Base, TimestampMixin):
     sku_external_id: Mapped[Optional[str]] = mapped_column(String(100))
     sku_description: Mapped[str] = mapped_column(Text, nullable=False)
     sku_brand: Mapped[str] = mapped_column(String(200), nullable=False)
+    sku_model: Mapped[Optional[str]] = mapped_column(String(200))
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     stock_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     condition: Mapped[str] = mapped_column(String(10), nullable=False)

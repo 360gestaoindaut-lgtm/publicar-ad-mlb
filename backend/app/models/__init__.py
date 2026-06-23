@@ -1,6 +1,7 @@
 from app.models.seller import Seller
 from app.models.user import User
 from app.models.user_seller_access import UserSellerAccess
+from app.models.product import Product
 from app.models.listing import Listing
 from app.models.listing_job import ListingJob
 from app.models.listing_title import ListingTitle
@@ -11,7 +12,7 @@ from app.models.product_image import ProductImage
 from app.models.batch_import import BatchImport, BatchImportRow
 
 __all__ = [
-    "Seller", "User", "UserSellerAccess", "Listing", "ListingJob",
+    "Seller", "User", "UserSellerAccess", "Product", "Listing", "ListingJob",
     "ListingTitle", "ListingAttribute", "ListingImage", "ListingDescription",
     "ProductImage", "BatchImport", "BatchImportRow",
 ]

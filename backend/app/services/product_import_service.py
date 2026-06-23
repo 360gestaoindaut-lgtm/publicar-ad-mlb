@@ -14,6 +14,8 @@ _COLUMN_MAP: dict[str, str] = {
     "nome": "descricao", "produto": "descricao", "description": "descricao",
     # Marca
     "marca": "marca", "brand": "marca", "fabricante": "marca",
+    # Modelo
+    "modelo": "modelo", "model": "modelo", "versao": "modelo", "variante": "modelo",
     # EAN
     "ean": "ean", "gtin": "ean", "codigobarras": "ean", "barcode": "ean", "cean": "ean",
     # NCM
@@ -131,6 +133,8 @@ def normalize_product_row(raw: dict) -> dict:
         out["description"] = (raw["descricao"] or "").strip()
     if "marca" in raw:
         out["brand"] = raw["marca"] or None
+    if "modelo" in raw:
+        out["model"] = raw["modelo"] or None
     if "ean" in raw:
         out["ean"] = raw["ean"] or None
     if "ncm" in raw:

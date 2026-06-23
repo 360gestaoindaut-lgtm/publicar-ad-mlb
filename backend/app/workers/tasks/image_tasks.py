@@ -13,7 +13,7 @@ async def _generate_images_async(listing_id: str) -> dict:
     from app.models.product_image import ProductImage
     from app.models.seller import Seller
     from app.services.ai.service import get_ai_provider
-    from app.services.image_service import GeminiImageService, MLPictureService, validate_image
+    from app.services.image_service import GeminiImageService, MLPictureService, validate_image, ensure_dimensions
 
     async with worker_session() as db:
         listing = (
@@ -76,6 +76,7 @@ async def _generate_images_async(listing_id: str) -> dict:
             if not validate_image(img_bytes):
                 continue
 
+            img_bytes = ensure_dimensions(img_bytes)
             ml_picture_id = await ml_pic.upload(img_bytes, access_token)
 
             db.add(ListingImage(

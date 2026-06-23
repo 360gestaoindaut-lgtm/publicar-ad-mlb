@@ -7,8 +7,10 @@ from app.models.seller import Seller
 
 _ML_API = "https://api.mercadolibre.com"
 
-# Atributos que o sistema pré-preenche automaticamente
-_PREFILL_KEYS = {"BRAND", "ITEM_CONDITION"}
+# Atributos que o sistema pré-preenche automaticamente (usados para definir source="seller")
+_PREFILL_KEYS = {"BRAND", "GTIN", "ITEM_CONDITION", "SELLER_SKU", "MODEL",
+                 "SELLER_PACKAGE_WEIGHT", "SELLER_PACKAGE_LENGTH",
+                 "SELLER_PACKAGE_WIDTH", "SELLER_PACKAGE_HEIGHT"}
 
 
 class CategoryService:
@@ -56,24 +58,37 @@ class CategoryService:
         )
 
         prefill: dict[str, str | None] = {
-            "BRAND": listing.sku_brand,
             "ITEM_CONDITION": "Novo" if listing.condition == "new" else "Usado",
         }
-        if ean:
-            prefill["GTIN"] = ean
+
+        # BRAND: só preenche se houver marca real (não placeholder "Sem marca")
+        brand = (listing.sku_brand or "").strip()
+        if brand and brand.lower() != "sem marca":
+            prefill["BRAND"] = brand
+
+        # GTIN: só preenche se o EAN for uma sequência numérica de comprimento válido
+        if ean and ean.strip().isdigit() and len(ean.strip()) in (8, 12, 13, 14):
+            prefill["GTIN"] = ean.strip()
+
         if listing.sku_external_id:
             prefill["SELLER_SKU"] = listing.sku_external_id
+
+        model = (getattr(listing, "sku_model", None) or "").strip()
+        if model:
+            prefill["MODEL"] = model
+
         if listing.package_weight_kg is not None:
             from decimal import Decimal as _D
-            # Planilha: kg → ML espera gramas; format 'f' evita notação científica (ex: 1.2E+2)
             weight_g = _D(str(listing.package_weight_kg)) * _D("1000")
-            prefill["SELLER_PACKAGE_WEIGHT"] = format(weight_g, 'f').rstrip("0").rstrip(".")
+            # ML espera valor + unidade: "120 g"
+            prefill["SELLER_PACKAGE_WEIGHT"] = format(weight_g, 'f').rstrip("0").rstrip(".") + " g"
+
         if listing.package_length_cm is not None:
-            prefill["SELLER_PACKAGE_LENGTH"] = str(listing.package_length_cm)
+            prefill["SELLER_PACKAGE_LENGTH"] = f"{listing.package_length_cm} cm"
         if listing.package_width_cm is not None:
-            prefill["SELLER_PACKAGE_WIDTH"] = str(listing.package_width_cm)
+            prefill["SELLER_PACKAGE_WIDTH"] = f"{listing.package_width_cm} cm"
         if listing.package_height_cm is not None:
-            prefill["SELLER_PACKAGE_HEIGHT"] = str(listing.package_height_cm)
+            prefill["SELLER_PACKAGE_HEIGHT"] = f"{listing.package_height_cm} cm"
 
         has_unfilled_required = False
 

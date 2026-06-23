@@ -52,6 +52,7 @@ function empty(p?: Product): ProductFormData {
     sku: p.sku,
     description: p.description,
     brand: p.brand ?? "",
+    model: p.model ?? "",
     ean: p.ean ?? "",
     ncm: p.ncm ?? "",
     fiscal_origin: p.fiscal_origin != null ? String(p.fiscal_origin) as any : "",
@@ -75,6 +76,7 @@ function toPayload(form: Record<string, string>): ProductFormData {
     sku: form.sku.trim(),
     description: form.description.trim(),
     brand: str(form.brand),
+    model: str(form.model),
     ean: str(form.ean),
     ncm: str(form.ncm),
     fiscal_origin: num(form.fiscal_origin) as any,
@@ -136,6 +138,8 @@ export function ProductForm({ initial, onSubmit }: Props) {
             placeholder="ex: SKU001" readOnly={isEdit} />
           <Field label="Marca" name="brand" value={form.brand} onChange={handleChange}
             placeholder="ex: Samsung" />
+          <Field label="Modelo" name="model" value={form.model} onChange={handleChange}
+            placeholder="ex: Galaxy A54 128GB" />
           <div className="sm:col-span-2">
             <Field label="Descrição *" name="description" value={form.description}
               onChange={handleChange} placeholder="ex: Smartphone Samsung Galaxy A54 128GB Preto" />

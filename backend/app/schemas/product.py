@@ -9,6 +9,7 @@ class ProductCreate(BaseModel):
     sku: str
     description: str
     brand: Optional[str] = None
+    model: Optional[str] = None
     ean: Optional[str] = None
     ncm: Optional[str] = None
     fiscal_origin: Optional[int] = None
@@ -47,6 +48,7 @@ class ProductCreate(BaseModel):
 class ProductUpdate(BaseModel):
     description: Optional[str] = None
     brand: Optional[str] = None
+    model: Optional[str] = None
     ean: Optional[str] = None
     ncm: Optional[str] = None
     fiscal_origin: Optional[int] = None
@@ -74,6 +76,7 @@ class ProductOut(BaseModel):
     sku: str
     description: str
     brand: Optional[str] = None
+    model: Optional[str] = None
     ean: Optional[str] = None
     ncm: Optional[str] = None
     fiscal_origin: Optional[int] = None

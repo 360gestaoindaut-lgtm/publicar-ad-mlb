@@ -19,6 +19,7 @@ class Product(Base, TimestampMixin):
     # Identificação
     description: Mapped[str] = mapped_column(Text, nullable=False)
     brand: Mapped[Optional[str]] = mapped_column(String(200))
+    model: Mapped[Optional[str]] = mapped_column(String(200))
     ean: Mapped[Optional[str]] = mapped_column(String(20))
     ncm: Mapped[Optional[str]] = mapped_column(String(10))
 

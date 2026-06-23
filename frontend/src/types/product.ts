@@ -2,6 +2,7 @@ export interface ProductFormData {
   sku: string
   description: string
   brand?: string | null
+  model?: string | null
   ean?: string | null
   ncm?: string | null
   fiscal_origin?: number | null
@@ -22,6 +23,7 @@ export interface Product {
   sku: string
   description: string
   brand: string | null
+  model: string | null
   ean: string | null
   ncm: string | null
   fiscal_origin: number | null
