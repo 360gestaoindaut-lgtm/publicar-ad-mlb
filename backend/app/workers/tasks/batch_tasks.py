@@ -10,6 +10,7 @@ async def _process_batch_async(batch_id: str) -> dict:
     from app.database import worker_session
     from app.models.batch_import import BatchImport, BatchImportRow
     from app.models.listing import Listing
+    from app.models.product import Product
     from app.services.batch_import_service import normalize_row, validate_row
 
     async with worker_session() as db:
@@ -41,15 +42,39 @@ async def _process_batch_async(batch_id: str) -> dict:
                     failed += 1
                     continue
 
-                price = normalized["preco"] or Decimal("0.01")
+                # Busca o produto pelo SKU dentro do seller — isolamento multi-tenant garantido
+                product = (
+                    await db.execute(
+                        select(Product).where(
+                            Product.seller_id == batch.seller_id,
+                            Product.sku == normalized["sku"],
+                        )
+                    )
+                ).scalar_one_or_none()
+
+                if not product:
+                    row.status = "failed"
+                    row.error_message = (
+                        f"Produto '{normalized['sku']}' não cadastrado. "
+                        "Importe o catálogo de produtos antes de importar anúncios."
+                    )
+                    failed += 1
+                    continue
 
                 listing = Listing(
                     seller_id=batch.seller_id,
                     created_by=batch.created_by,
-                    sku_external_id=normalized["sku"],
-                    sku_description=normalized["descricao"],
-                    sku_brand=normalized["marca"],
-                    price=price,
+                    product_id=product.id,
+                    # Desnormalizados do produto (fase 1 — preserva compatibilidade com pipeline)
+                    sku_external_id=product.sku,
+                    sku_description=product.description,
+                    sku_brand=product.brand or "Sem marca",
+                    package_weight_kg=product.weight_kg,
+                    package_length_cm=product.length_cm,
+                    package_width_cm=product.width_cm,
+                    package_height_cm=product.height_cm,
+                    # Da planilha de anúncio
+                    price=normalized["preco"],
                     stock_quantity=normalized["estoque"],
                     condition=normalized["condicao"],
                     listing_type_id=normalized["tipo_anuncio"],
@@ -68,7 +93,7 @@ async def _process_batch_async(batch_id: str) -> dict:
                     args=[str(listing.id)],
                     kwargs={
                         "batch_mode": True,
-                        "ean": normalized.get("ean"),
+                        "ean": product.ean,          # EAN vem do produto, não da planilha
                         "seo_context": normalized.get("seo_context"),
                     },
                 )
@@ -80,14 +105,7 @@ async def _process_batch_async(batch_id: str) -> dict:
 
         batch.processed_rows = processed
         batch.failed_rows = failed
-
-        if failed == 0:
-            batch.status = "running"
-        elif processed == 0:
-            batch.status = "error"
-        else:
-            batch.status = "partial_error" if failed > 0 else "running"
-
+        batch.status = "error" if processed == 0 else ("partial_error" if failed > 0 else "running")
         await db.commit()
 
     return {"batch_id": batch_id, "processed": processed, "failed": failed}

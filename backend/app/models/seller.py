@@ -22,3 +22,4 @@ class Seller(Base, TimestampMixin):
         "UserSellerAccess", back_populates="seller", cascade="all, delete-orphan"
     )
     listings: Mapped[list["Listing"]] = relationship("Listing", back_populates="seller")
+    products: Mapped[list["Product"]] = relationship("Product", back_populates="seller")

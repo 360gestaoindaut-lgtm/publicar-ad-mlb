@@ -1,9 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
 import { Sidebar } from "@/components/layout/Sidebar"
-import { Topbar } from "@/components/layout/Topbar"
 import { SellerProvider } from "@/contexts/SellerContext"
 
 export default function DashboardLayout({
@@ -12,6 +11,7 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   const router = useRouter()
+  const pathname = usePathname()
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -35,10 +35,11 @@ export default function DashboardLayout({
     <SellerProvider>
       <div className="flex h-screen overflow-hidden bg-background">
         <Sidebar />
-        <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <Topbar />
-          <main className="flex-1 overflow-y-auto p-6">{children}</main>
-        </div>
+        <main className="flex-1 min-w-0 overflow-y-auto p-6">
+          <div key={pathname} className="animate-in fade-in duration-200">
+            {children}
+          </div>
+        </main>
       </div>
     </SellerProvider>
   )

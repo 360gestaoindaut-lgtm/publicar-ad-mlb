@@ -112,7 +112,7 @@ export default function DashboardPage() {
     <div>
       <div className="mb-6 flex items-center gap-2">
         <LayoutDashboard className="w-5 h-5 text-slate-600" />
-        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-foreground">Anúncios</h1>
       </div>
 
       {isLoading ? (

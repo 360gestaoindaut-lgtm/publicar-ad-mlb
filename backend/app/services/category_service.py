@@ -59,9 +59,21 @@ class CategoryService:
             "BRAND": listing.sku_brand,
             "ITEM_CONDITION": "Novo" if listing.condition == "new" else "Usado",
         }
-        # EAN da planilha preenche automaticamente o atributo GTIN do ML
         if ean:
             prefill["GTIN"] = ean
+        if listing.sku_external_id:
+            prefill["SELLER_SKU"] = listing.sku_external_id
+        if listing.package_weight_kg is not None:
+            from decimal import Decimal as _D
+            # Planilha: kg → ML espera gramas; format 'f' evita notação científica (ex: 1.2E+2)
+            weight_g = _D(str(listing.package_weight_kg)) * _D("1000")
+            prefill["SELLER_PACKAGE_WEIGHT"] = format(weight_g, 'f').rstrip("0").rstrip(".")
+        if listing.package_length_cm is not None:
+            prefill["SELLER_PACKAGE_LENGTH"] = str(listing.package_length_cm)
+        if listing.package_width_cm is not None:
+            prefill["SELLER_PACKAGE_WIDTH"] = str(listing.package_width_cm)
+        if listing.package_height_cm is not None:
+            prefill["SELLER_PACKAGE_HEIGHT"] = str(listing.package_height_cm)
 
         has_unfilled_required = False
 
@@ -94,7 +106,7 @@ class CategoryService:
                 is_required=is_required,
                 value_id=value_id,
                 value_name=value_name,
-                source="ai" if attr_id not in ("GTIN",) or not ean else "seller",
+                source="seller" if attr_id in prefill and prefill.get(attr_id) else "ai",
                 allowed_values=allowed,
             ))
 

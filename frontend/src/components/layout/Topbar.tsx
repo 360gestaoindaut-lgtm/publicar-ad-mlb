@@ -15,7 +15,9 @@ const BREADCRUMB_LABELS: Record<string, string> = {
   images: "Imagens",
   preview: "Revisão e publicação",
   settings: "Configurações",
-  dashboard: "Dashboard",
+  products: "Produtos",
+  upload: "Importar planilha",
+  import: "Importar anúncios",
 }
 
 function getBreadcrumbs(pathname: string): { label: string; href: string }[] {

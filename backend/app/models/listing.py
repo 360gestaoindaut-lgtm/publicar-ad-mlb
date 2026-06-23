@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin
 
 
+
 class Listing(Base, TimestampMixin):
     __tablename__ = "listings"
 
@@ -22,6 +23,15 @@ class Listing(Base, TimestampMixin):
     condition: Mapped[str] = mapped_column(String(10), nullable=False)
     listing_type_id: Mapped[str] = mapped_column(String(20), nullable=False, default="gold_special")
 
+    package_weight_kg: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3))
+    package_length_cm: Mapped[Optional[int]] = mapped_column(Integer)
+    package_width_cm: Mapped[Optional[int]] = mapped_column(Integer)
+    package_height_cm: Mapped[Optional[int]] = mapped_column(Integer)
+
+    product_id: Mapped[Optional[UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("products.id"), nullable=True, index=True
+    )
+
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="draft")
     created_via: Mapped[str] = mapped_column(String(10), nullable=False, default="manual")
     ml_category_id: Mapped[Optional[str]] = mapped_column(String(20))
@@ -29,6 +39,7 @@ class Listing(Base, TimestampMixin):
     selected_title: Mapped[Optional[str]] = mapped_column(Text)
     error_message: Mapped[Optional[str]] = mapped_column(Text)
 
+    product: Mapped[Optional["Product"]] = relationship("Product", back_populates="listings")
     seller: Mapped["Seller"] = relationship("Seller", back_populates="listings")
     created_by_user: Mapped["User"] = relationship("User", foreign_keys=[created_by])
     jobs: Mapped[list["ListingJob"]] = relationship(

@@ -4,25 +4,34 @@ import unicodedata
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-# Planilha de anúncios: apenas campos de publicação.
-# Dados de produto (descrição, marca, EAN, fiscal, físico) vêm do catálogo de produtos.
 _COLUMN_MAP: dict[str, str] = {
-    # SKU — referência ao produto cadastrado
+    # SKU
     "sku": "sku", "cod": "sku", "codigo": "sku", "codinterno": "sku",
     "referencia": "sku", "ref": "sku",
-    # Preço
-    "preco": "preco", "preço": "preco", "price": "preco",
-    "valorvenda": "preco", "prv": "preco",
-    # Estoque
-    "estoque": "estoque", "qty": "estoque", "quantidade": "estoque",
-    "saldo": "estoque", "stock": "estoque",
-    # Tipo de anúncio
-    "tipoanuncio": "tipo_anuncio", "tipo": "tipo_anuncio", "listingtype": "tipo_anuncio",
-    # Condição
-    "condicao": "condicao", "condição": "condicao", "condition": "condicao",
-    # SEO
-    "seocontext": "seo_context", "contexto": "seo_context", "seo": "seo_context",
-    "contextoseo": "seo_context", "palavraschave": "seo_context",
+    # Descrição
+    "descricao": "descricao", "descricao": "descricao", "xprod": "descricao",
+    "descricaoproduto": "descricao", "nomeproduto": "descricao",
+    "nome": "descricao", "produto": "descricao", "description": "descricao",
+    # Marca
+    "marca": "marca", "brand": "marca", "fabricante": "marca",
+    # EAN
+    "ean": "ean", "gtin": "ean", "codigobarras": "ean", "barcode": "ean", "cean": "ean",
+    # NCM
+    "ncm": "ncm",
+    # Fiscal
+    "origemfiscal": "fiscal_origin", "origem": "fiscal_origin",
+    "icmscst": "icms_cst", "csticms": "icms_cst",
+    "icmsrate": "icms_rate", "aliquotaicms": "icms_rate", "alicms": "icms_rate",
+    "piscst": "pis_cst", "cstpis": "pis_cst",
+    "cofinscst": "cofins_cst", "cstcofins": "cofins_cst",
+    # Físico
+    "pesokg": "peso_kg", "peso": "peso_kg", "weight": "peso_kg",
+    "comprimentocm": "comprimento_cm", "comprimento": "comprimento_cm", "length": "comprimento_cm",
+    "larguracm": "largura_cm", "largura": "largura_cm", "width": "largura_cm",
+    "alturacm": "altura_cm", "altura": "altura_cm", "height": "altura_cm",
+    # Custo
+    "custo": "custo", "custounif": "custo", "custounidade": "custo",
+    "costprice": "custo", "precodecompra": "custo",
 }
 
 
@@ -63,7 +72,7 @@ def _detect_delimiter(first_line: str) -> str:
     return ";" if first_line.count(";") >= first_line.count(",") else ","
 
 
-def parse_csv(content: bytes) -> list[dict]:
+def parse_product_csv(content: bytes) -> list[dict]:
     text = content.decode("utf-8-sig", errors="replace")
     first_line = text.splitlines()[0] if text.strip() else ""
     delimiter = _detect_delimiter(first_line)
@@ -84,7 +93,7 @@ def parse_csv(content: bytes) -> list[dict]:
     return result
 
 
-def parse_xlsx(content: bytes) -> list[dict]:
+def parse_product_xlsx(content: bytes) -> list[dict]:
     try:
         import openpyxl
     except ImportError as e:
@@ -112,36 +121,47 @@ def parse_xlsx(content: bytes) -> list[dict]:
     return result
 
 
-def _normalize_listing_type(val: str | None) -> str:
-    if not val:
-        return "gold_special"
-    normalized = val.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
-    if normalized in ("goldpro", "premium", "ouro", "pro"):
-        return "gold_pro"
-    if normalized in ("goldspecial", "classico", "clássico", "classic", "special"):
-        return "gold_special"
-    return val.strip() if val.strip() in ("gold_special", "gold_pro") else "gold_special"
+def normalize_product_row(raw: dict) -> dict:
+    """Converte tipos de uma linha parseada. Retorna apenas campos presentes na linha."""
+    out: dict = {}
+
+    if "sku" in raw:
+        out["sku"] = (raw["sku"] or "").strip()
+    if "descricao" in raw:
+        out["description"] = (raw["descricao"] or "").strip()
+    if "marca" in raw:
+        out["brand"] = raw["marca"] or None
+    if "ean" in raw:
+        out["ean"] = raw["ean"] or None
+    if "ncm" in raw:
+        out["ncm"] = raw["ncm"] or None
+    if "fiscal_origin" in raw:
+        out["fiscal_origin"] = _to_int(raw["fiscal_origin"])
+    if "icms_cst" in raw:
+        out["icms_cst"] = raw["icms_cst"] or None
+    if "icms_rate" in raw:
+        out["icms_rate"] = _to_decimal(raw["icms_rate"])
+    if "pis_cst" in raw:
+        out["pis_cst"] = raw["pis_cst"] or None
+    if "cofins_cst" in raw:
+        out["cofins_cst"] = raw["cofins_cst"] or None
+    if "peso_kg" in raw:
+        out["weight_kg"] = _to_decimal(raw["peso_kg"])
+    if "comprimento_cm" in raw:
+        out["length_cm"] = _to_int(raw["comprimento_cm"])
+    if "largura_cm" in raw:
+        out["width_cm"] = _to_int(raw["largura_cm"])
+    if "altura_cm" in raw:
+        out["height_cm"] = _to_int(raw["altura_cm"])
+    if "custo" in raw:
+        out["acquisition_cost"] = _to_decimal(raw["custo"])
+
+    return out
 
 
-def normalize_row(raw: dict) -> dict:
-    condicao = (raw.get("condicao") or "new").lower()
-    condicao = "used" if condicao in ("usado", "used", "u") else "new"
-
-    return {
-        "sku": raw.get("sku") or "",
-        "preco": _to_decimal(raw.get("preco")),
-        "estoque": _to_int(raw.get("estoque")) or 1,
-        "condicao": condicao,
-        "tipo_anuncio": _normalize_listing_type(raw.get("tipo_anuncio")),
-        "seo_context": raw.get("seo_context") or None,
-    }
-
-
-def validate_row(normalized: dict) -> str | None:
-    if not normalized["sku"]:
+def validate_product_row(normalized: dict) -> str | None:
+    if not normalized.get("sku"):
         return "Campo 'sku' obrigatório está vazio"
-    if normalized["preco"] is None:
-        return "Campo 'preco' obrigatório está ausente"
-    if normalized["preco"] <= 0:
-        return f"Preço inválido: {normalized['preco']}"
+    if "description" in normalized and not normalized["description"]:
+        return "Campo 'descricao' não pode ser vazio"
     return None

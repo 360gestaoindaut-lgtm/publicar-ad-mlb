@@ -21,11 +21,13 @@ import {
   Clock,
   ChevronDown,
   ChevronRight,
+  Download,
   Link as LinkIcon,
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import Link from "next/link"
+import { downloadListingTemplate } from "@/lib/download-template"
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "Na fila",
@@ -240,10 +242,57 @@ export default function ImportPage() {
   return (
     <div className="max-w-3xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-foreground">Importação em massa</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Faça upload de um arquivo CSV ou XLSX exportado do seu ERP. O pipeline roda automaticamente para cada SKU.
+        <h1 className="text-2xl font-bold text-foreground">Importar anúncios</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Faça upload da planilha de anúncios. O pipeline roda automaticamente para cada SKU.
         </p>
+      </div>
+
+      {/* Aviso de pré-requisito */}
+      <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 px-4 py-3">
+        <span className="text-amber-500 text-base leading-none mt-0.5">⚠</span>
+        <div className="text-sm">
+          <span className="font-semibold text-amber-800 dark:text-amber-300">Pré-requisito: </span>
+          <span className="text-amber-700 dark:text-amber-400">
+            Os produtos precisam estar cadastrados no{" "}
+            <Link href="/products" className="underline hover:no-underline font-medium">
+              Catálogo de Produtos
+            </Link>{" "}
+            antes de importar anúncios. Linhas com SKU não cadastrado serão rejeitadas.
+          </span>
+        </div>
+      </div>
+
+      {/* Colunas aceitas */}
+      <div className="mb-5 rounded-lg border border-border bg-muted/30 px-4 py-3">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Colunas da planilha de anúncios
+          </p>
+          <button
+            type="button"
+            onClick={() => downloadListingTemplate()}
+            className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Baixar modelo
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-x-8 gap-y-0.5 text-xs text-muted-foreground">
+          {[
+            ["sku *", "Referência ao produto cadastrado"],
+            ["preco *", "Preço de venda (R$)"],
+            ["estoque", "Quantidade disponível (padrão: 1)"],
+            ["tipo", "classico ou premium (padrão: classico)"],
+            ["condicao", "novo ou usado (padrão: novo)"],
+            ["seo", "Contexto SEO para geração de título"],
+          ].map(([col, desc]) => (
+            <div key={col} className="flex gap-2 py-0.5">
+              <span className="font-mono w-24 shrink-0">{col}</span>
+              <span>{desc}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Drop zone */}

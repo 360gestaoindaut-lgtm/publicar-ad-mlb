@@ -23,6 +23,7 @@ export default function NewListingPage() {
     price: "",
     stock_quantity: "",
     condition: "new" as Condition,
+    listing_type_id: "gold_special",
   })
 
   const mutation = useMutation({
@@ -33,6 +34,7 @@ export default function NewListingPage() {
         price: parseFloat(form.price.replace(/\./g, "").replace(",", ".")),
         stock_quantity: parseInt(form.stock_quantity),
         condition: form.condition,
+        listing_type_id: form.listing_type_id,
       })
       await startPipeline(listing.id)
       return listing
@@ -179,8 +181,8 @@ export default function NewListingPage() {
                     key={value}
                     className={`flex items-center gap-2 px-4 py-2 rounded-md border cursor-pointer transition-colors ${
                       form.condition === value
-                        ? "border-slate-900 bg-slate-900 text-white"
-                        : "border-slate-200 hover:border-slate-300"
+                        ? "border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-900"
+                        : "border-border hover:border-slate-400"
                     }`}
                   >
                     <input
@@ -194,6 +196,38 @@ export default function NewListingPage() {
                       className="sr-only"
                     />
                     <span className="text-sm font-medium">{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Tipo de anúncio</Label>
+              <div className="flex gap-3">
+                {[
+                  { value: "gold_special", label: "Clássico", desc: "Sem parcelamento grátis" },
+                  { value: "gold_pro", label: "Premium", desc: "Com parcelamento grátis" },
+                ].map(({ value, label, desc }) => (
+                  <label
+                    key={value}
+                    className={`flex-1 flex flex-col px-4 py-2.5 rounded-md border cursor-pointer transition-colors ${
+                      form.listing_type_id === value
+                        ? "border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-900"
+                        : "border-border hover:border-slate-400"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="listing_type_id"
+                      value={value}
+                      checked={form.listing_type_id === value}
+                      onChange={() => setForm((prev) => ({ ...prev, listing_type_id: value }))}
+                      className="sr-only"
+                    />
+                    <span className="text-sm font-medium">{label}</span>
+                    <span className={`text-[11px] mt-0.5 ${form.listing_type_id === value ? "opacity-70" : "text-muted-foreground"}`}>
+                      {desc}
+                    </span>
                   </label>
                 ))}
               </div>

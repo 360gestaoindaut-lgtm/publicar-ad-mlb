@@ -12,12 +12,20 @@ class ListingCreate(BaseModel):
     price: Decimal
     stock_quantity: int
     condition: str
+    listing_type_id: str = "gold_special"
 
     @field_validator("condition")
     @classmethod
     def condition_must_be_valid(cls, v: str) -> str:
         if v not in ("new", "used"):
             raise ValueError("Condição deve ser 'new' ou 'used'")
+        return v
+
+    @field_validator("listing_type_id")
+    @classmethod
+    def listing_type_must_be_valid(cls, v: str) -> str:
+        if v not in ("gold_special", "gold_pro"):
+            raise ValueError("Tipo de anúncio deve ser 'gold_special' (Clássico) ou 'gold_pro' (Premium)")
         return v
 
     @field_validator("price")
@@ -37,6 +45,7 @@ class ListingCreate(BaseModel):
 
 class ListingSummary(BaseModel):
     id: UUID
+    product_id: Optional[UUID] = None
     sku_external_id: Optional[str]
     sku_brand: str
     selected_title: Optional[str]
