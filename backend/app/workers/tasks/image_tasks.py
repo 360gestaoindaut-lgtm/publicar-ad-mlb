@@ -56,8 +56,6 @@ async def _generate_images_async(listing_id: str) -> dict:
                 if listing.created_via == "batch":
                     listing.status = "generating_description"
                     await db.commit()
-                    from app.workers.tasks.ai_tasks import generate_description
-                    generate_description.delay(listing_id)
                 else:
                     listing.status = "pending_image_approval"
                     await db.commit()
@@ -129,8 +127,6 @@ async def _generate_images_async(listing_id: str) -> dict:
                     pi.is_approved = True
             listing.status = "generating_description"
             await db.commit()
-            from app.workers.tasks.ai_tasks import generate_description
-            generate_description.delay(listing_id)
         else:
             listing.status = "pending_image_approval"
             await db.commit()

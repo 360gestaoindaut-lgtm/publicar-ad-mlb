@@ -94,8 +94,6 @@ async def _generate_description_async(listing_id: str) -> dict:
         if listing.created_via == "batch":
             listing.status = "publishing"
             await db.commit()
-            from app.workers.tasks.publish_tasks import publish_listing
-            publish_listing.delay(listing_id)
         else:
             listing.status = "ready_to_publish"
             await db.commit()

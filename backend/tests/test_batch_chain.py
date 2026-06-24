@@ -163,3 +163,89 @@ class TestSubmitAttributesChainDispatch:
 
         mock_chain_fn.assert_called_once()
         mock_chain_instance.delay.assert_called_once()
+
+
+class TestRemovedInternalDispatch:
+    """Garante que tasks no batch path não mais chamam .delay() internamente.
+    A chain (Task 3) é responsável por despachar os próximos steps.
+    """
+
+    @pytest.mark.asyncio
+    async def test_generate_images_reuse_does_not_call_generate_description_delay(self):
+        """Reuse path: imagens copiadas do índice, mas generate_description NÃO é chamado."""
+        from app.workers.tasks.image_tasks import _generate_images_async
+
+        # Imagem existente no índice SKU→imagem
+        mock_product_image = MagicMock()
+        mock_product_image.ml_picture_id = "pic-123"
+
+        mock_listing = MagicMock()
+        mock_listing.id = "lid"
+        mock_listing.status = "generating_images"
+        mock_listing.sku_external_id = "SKU-001"
+        mock_listing.seller_id = "sid"
+        mock_listing.created_via = "batch"
+
+        mock_db = AsyncMock()
+        execute_calls = [0]
+
+        async def execute_side(stmt):
+            execute_calls[0] += 1
+            r = MagicMock()
+            if execute_calls[0] == 1:   # SELECT Listing
+                r.scalar_one = MagicMock(return_value=mock_listing)
+            else:                        # SELECT ProductImage (imagens existentes)
+                r.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[mock_product_image])))
+            return r
+
+        mock_db.execute = execute_side
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
+             patch("app.workers.tasks.ai_tasks.generate_description") as mock_gd:
+            await _generate_images_async("lid")
+
+        mock_gd.delay.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_generate_description_batch_does_not_call_publish_listing_delay(self):
+        """generate_description em batch seta status 'publishing' mas NÃO despacha publish_listing."""
+        from app.workers.tasks.ai_tasks import _generate_description_async
+
+        mock_listing = MagicMock()
+        mock_listing.id = "lid"
+        mock_listing.created_via = "batch"
+        mock_listing.selected_title = "Title"
+        mock_listing.sku_brand = "Brand"
+        mock_listing.sku_description = "Desc"
+        mock_listing.condition = "new"
+
+        mock_db = AsyncMock()
+        execute_calls = [0]
+
+        async def execute_side(stmt):
+            execute_calls[0] += 1
+            r = MagicMock()
+            if execute_calls[0] == 1:   # SELECT Listing
+                r.scalar_one = MagicMock(return_value=mock_listing)
+            elif execute_calls[0] == 2: # SELECT ListingAttribute
+                r.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+            else:                        # SELECT ListingDescription
+                r.scalar_one_or_none = MagicMock(return_value=None)
+            return r
+
+        mock_db.execute = execute_side
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
+             patch("app.services.ai.service.get_ai_provider") as mock_provider_fn, \
+             patch("app.workers.tasks.publish_tasks.publish_listing") as mock_pl:
+            mock_ai = AsyncMock()
+            mock_ai.generate_description = AsyncMock(return_value="<p>desc</p>")
+            mock_provider_fn.return_value = mock_ai
+            await _generate_description_async("lid")
+
+        mock_pl.delay.assert_not_called()
+        assert mock_listing.status == "publishing"
