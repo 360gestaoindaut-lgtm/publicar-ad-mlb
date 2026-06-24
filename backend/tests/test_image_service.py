@@ -1,8 +1,10 @@
 import io
 import pytest
+import httpx
 from PIL import Image
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.image_service import ensure_dimensions
+from app.services.image_service import ensure_dimensions, GeminiImageService, ImageRateLimitError
 
 
 def _make_jpeg(width: int, height: int) -> bytes:
@@ -43,12 +45,6 @@ class TestEnsureDimensions:
         assert img.format == "JPEG"
 
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-
-from app.services.image_service import GeminiImageService, ImageRateLimitError
-
-
 class TestGeminiImageService429:
     @pytest.mark.asyncio
     async def test_raises_rate_limit_error_on_429(self):
@@ -68,8 +64,6 @@ class TestGeminiImageService429:
 
     @pytest.mark.asyncio
     async def test_other_errors_raise_http_status_error(self):
-        import httpx
-
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_response.is_success = False

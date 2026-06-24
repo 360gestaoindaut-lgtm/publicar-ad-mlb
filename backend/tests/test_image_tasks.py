@@ -1,7 +1,10 @@
+import asyncio
 import logging
 import pytest
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from app.services.image_service import ImageRateLimitError
 
 
 @asynccontextmanager
@@ -23,8 +26,6 @@ class TestMarkFailed:
 
         listing = _make_mock_listing()
         mock_db = AsyncMock()
-        # Make execute() return a mock with scalar_one_or_none method
-        # that returns a coroutine when awaited
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = listing
 
@@ -94,12 +95,6 @@ class TestMarkFailed:
             await _mark_failed("abc-123", "error")  # must not raise
 
 
-import asyncio
-from unittest.mock import patch, MagicMock
-
-from app.services.image_service import ImageRateLimitError
-
-
 class TestGenerateImagesRateLimit:
     def test_rate_limit_error_uses_longer_countdown(self):
         from app.workers.tasks.image_tasks import generate_images
@@ -108,7 +103,7 @@ class TestGenerateImagesRateLimit:
 
         def fake_retry(exc, countdown):
             retry_calls.append(countdown)
-            raise exc  # simula o raise que o Celery faz internamente
+            raise exc
 
         mock_self = MagicMock()
         mock_self.request.retries = 0
