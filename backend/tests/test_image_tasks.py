@@ -141,3 +141,36 @@ class TestGenerateImagesRateLimit:
                 generate_images.run.__func__(mock_self, "listing-abc")
 
         assert retry_calls == [5], f"Expected countdown=5, got {retry_calls}"
+
+
+class TestFetchUploadToken:
+    @pytest.mark.asyncio
+    async def test_calls_get_valid_access_token(self):
+        from app.workers.tasks.image_tasks import _fetch_upload_token
+
+        mock_seller = MagicMock()
+        mock_db = AsyncMock()
+
+        with patch(
+            "app.services.publish_service.get_valid_access_token",
+            new_callable=AsyncMock,
+            return_value="refreshed-token",
+        ) as mock_fn:
+            result = await _fetch_upload_token(mock_seller, mock_db)
+
+        assert result == "refreshed-token"
+        mock_fn.assert_called_once_with(mock_seller, mock_db)
+
+    @pytest.mark.asyncio
+    async def test_does_not_call_decrypt_value_directly(self):
+        from app.workers.tasks.image_tasks import _fetch_upload_token
+
+        with patch("app.core.security.decrypt_value") as mock_decrypt, \
+             patch(
+                 "app.services.publish_service.get_valid_access_token",
+                 new_callable=AsyncMock,
+                 return_value="tok",
+             ):
+            await _fetch_upload_token(MagicMock(), AsyncMock())
+
+        mock_decrypt.assert_not_called()

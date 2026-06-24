@@ -3,10 +3,14 @@ import asyncio
 from app.workers.celery_app import celery_app
 
 
+async def _fetch_upload_token(seller, db) -> str:
+    from app.services.publish_service import get_valid_access_token
+    return await get_valid_access_token(seller, db)
+
+
 async def _generate_images_async(listing_id: str) -> dict:
     from sqlalchemy import select
 
-    from app.core.security import decrypt_value
     from app.database import worker_session
     from app.models.listing import Listing
     from app.models.listing_image import ListingImage
@@ -59,7 +63,7 @@ async def _generate_images_async(listing_id: str) -> dict:
         seller = (
             await db.execute(select(Seller).where(Seller.id == listing.seller_id))
         ).scalar_one()
-        access_token = decrypt_value(seller.access_token_enc)
+        access_token = await _fetch_upload_token(seller, db)
 
         ai = get_ai_provider()
         prompt = await ai.generate_image_prompt(
