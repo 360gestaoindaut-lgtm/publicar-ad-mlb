@@ -170,10 +170,27 @@ class ListingService:
         # Batch: avança automaticamente sem esperar o seller clicar
         if listing.created_via == "batch":
             if new_status == "pending_description":
-                listing.status = "generating_images"
+                result = await self.db.execute(
+                    update(Listing)
+                    .where(
+                        Listing.id == listing.id,
+                        Listing.status == "pending_description",
+                    )
+                    .values(status="generating_images")
+                    .execution_options(synchronize_session=False)
+                )
                 await self.db.commit()
-                from app.workers.tasks.image_tasks import generate_images
-                generate_images.delay(str(listing.id))
+                if result.rowcount == 1:
+                    listing.status = "generating_images"
+                    from celery import chain as celery_chain
+                    from app.workers.tasks.image_tasks import generate_images
+                    from app.workers.tasks.ai_tasks import generate_description
+                    from app.workers.tasks.publish_tasks import publish_listing
+                    celery_chain(
+                        generate_images.si(str(listing.id)),
+                        generate_description.si(str(listing.id)),
+                        publish_listing.si(str(listing.id)),
+                    ).delay()
             elif new_status == "ready_to_publish":
                 listing.status = "publishing"
                 await self.db.commit()

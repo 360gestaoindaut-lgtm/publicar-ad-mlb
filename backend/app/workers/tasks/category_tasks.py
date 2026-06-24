@@ -18,10 +18,28 @@ async def _predict_category_async(listing_id: str, ean: str | None = None) -> di
 
         # Batch: avança automaticamente para geração de imagens sem esperar aprovação humana
         if listing.created_via == "batch" and listing.status == "pending_description":
-            listing.status = "generating_images"
+            from sqlalchemy import update as sa_update
+            result = await db.execute(
+                sa_update(Listing)
+                .where(
+                    Listing.id == listing_id,
+                    Listing.status == "pending_description",
+                    Listing.created_via == "batch",
+                )
+                .values(status="generating_images")
+                .execution_options(synchronize_session=False)
+            )
             await db.commit()
-            from app.workers.tasks.image_tasks import generate_images
-            generate_images.delay(listing_id)
+            if result.rowcount == 1:
+                from celery import chain as celery_chain
+                from app.workers.tasks.image_tasks import generate_images
+                from app.workers.tasks.ai_tasks import generate_description
+                from app.workers.tasks.publish_tasks import publish_listing
+                celery_chain(
+                    generate_images.si(listing_id),
+                    generate_description.si(listing_id),
+                    publish_listing.si(listing_id),
+                ).delay()
 
     return {"listing_id": listing_id, "category_id": listing.ml_category_id}
 
