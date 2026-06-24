@@ -75,6 +75,7 @@ class TestMarkFailed:
 
         assert "abc-123" in caplog.text
         assert "original error" in caplog.text
+        assert "DB connection lost" in caplog.text
 
     @pytest.mark.asyncio
     async def test_listing_not_found_does_not_raise(self):
