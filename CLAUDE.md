@@ -30,6 +30,8 @@ Sistema web para automação de criação e publicação de anúncios no Mercado
 | Sprint 2 | ✅ | Batch import: upload de planilha de anúncios → pipeline automático sem aprovação humana |
 | SPEC-010 | ✅ | Catálogo de Produtos: tabela `products`, ProductService multi-tenant, CRUD via UI e planilha |
 | SPEC-011 | ✅ | Listing upload refatorado: planilha de anúncios só tem campos de publicação; dados do produto vêm do catálogo |
+| Quick fixes F-1..F-4 | ✅ | Resiliência do pipeline de imagens: ensure_dimensions seguro, _mark_failed robusto, ImageRateLimitError + backoff 429 |
+| SPEC-012 | ✅ | Resiliência estrutural do pipeline de imagens (token refresh, idempotência, Celery chain, lock otimista) |
 | Fase 6 | 🔲 | Deploy produção (Railway + Vercel) + rotação de credenciais |
 
 ---
