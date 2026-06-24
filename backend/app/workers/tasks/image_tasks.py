@@ -131,15 +131,27 @@ async def _generate_images_async(listing_id: str) -> dict:
 
 
 async def _mark_failed(listing_id: str, error: str) -> None:
-    from app.database import worker_session
-    from app.models.listing import Listing
-    from sqlalchemy import select
-    async with worker_session() as db:
-        listing = (await db.execute(select(Listing).where(Listing.id == listing_id))).scalar_one_or_none()
-        if listing:
-            listing.status = "failed"
-            listing.error_message = error[:500] if hasattr(listing, "error_message") else None
-            await db.commit()
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        from app.database import worker_session
+        from app.models.listing import Listing
+        from sqlalchemy import select
+        async with worker_session() as db:
+            listing = (
+                await db.execute(select(Listing).where(Listing.id == listing_id))
+            ).scalar_one_or_none()
+            if listing:
+                listing.status = "failed"
+                listing.error_message = error[:500]
+                await db.commit()
+    except Exception as mark_exc:
+        logger.error(
+            "Could not mark listing %s as failed (original error: %s): %s",
+            listing_id,
+            error,
+            mark_exc,
+        )
 
 
 @celery_app.task(name="app.workers.tasks.image_tasks.generate_images", bind=True, max_retries=2)
