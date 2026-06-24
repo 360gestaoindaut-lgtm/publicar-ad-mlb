@@ -77,6 +77,8 @@ async def _generate_images_async(listing_id: str) -> dict:
                 continue
 
             img_bytes = ensure_dimensions(img_bytes)
+            if img_bytes is None:
+                continue
             ml_picture_id = await ml_pic.upload(img_bytes, access_token)
 
             db.add(ListingImage(

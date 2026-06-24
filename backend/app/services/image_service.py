@@ -85,9 +85,12 @@ def validate_image(image_bytes: bytes) -> bool:
         return False
 
 
-def ensure_dimensions(image_bytes: bytes, target: int = _RECOMMENDED_DIM) -> bytes:
-    """Upscale to target×target if smaller; always returns JPEG bytes."""
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+def ensure_dimensions(image_bytes: bytes, target: int = _RECOMMENDED_DIM) -> bytes | None:
+    """Upscale to target×target if smaller; always returns JPEG bytes. Returns None if bytes are corrupted."""
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception:
+        return None
     w, h = img.size
     if w < target or h < target:
         scale = target / min(w, h)
