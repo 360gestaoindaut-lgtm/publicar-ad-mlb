@@ -2,7 +2,7 @@ import io
 import pytest
 from PIL import Image
 
-from app.services.image_service import ensure_dimensions, validate_image
+from app.services.image_service import ensure_dimensions
 
 
 def _make_jpeg(width: int, height: int) -> bytes:
