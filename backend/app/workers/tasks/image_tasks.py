@@ -24,6 +24,10 @@ async def _generate_images_async(listing_id: str) -> dict:
             await db.execute(select(Listing).where(Listing.id == listing_id))
         ).scalar_one()
 
+        # Guard de idempotência: se o status já avançou (retry ou dispatch duplo), abortar.
+        if listing.status != "generating_images":
+            return {"listing_id": listing_id, "skipped": True}
+
         sku = listing.sku_external_id or ""
 
         # Verifica se já existem imagens aprovadas para este SKU neste seller

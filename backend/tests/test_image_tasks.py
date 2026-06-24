@@ -174,3 +174,56 @@ class TestFetchUploadToken:
             await _fetch_upload_token(MagicMock(), AsyncMock())
 
         mock_decrypt.assert_not_called()
+
+
+class TestGenerateImagesIdempotency:
+    @pytest.mark.asyncio
+    async def test_skips_when_status_not_generating_images(self):
+        from app.workers.tasks.image_tasks import _generate_images_async
+
+        mock_listing = MagicMock()
+        mock_listing.status = "pending_image_approval"  # já avançou
+
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = mock_listing
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
+             patch("app.services.image_service.GeminiImageService") as mock_gemini:
+            result = await _generate_images_async("listing-id")
+
+        assert result == {"listing_id": "listing-id", "skipped": True}
+        mock_gemini.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_proceeds_when_status_is_generating_images(self):
+        """Verificação negativa: guard NÃO aborta quando status está correto."""
+        from app.workers.tasks.image_tasks import _generate_images_async
+
+        mock_listing = MagicMock()
+        mock_listing.status = "generating_images"
+        mock_listing.sku_external_id = None
+        mock_listing.seller_id = "sid"
+        mock_listing.created_via = "manual"
+
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = mock_listing
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        # Com status correto, a função avança — mas vai falhar em algum ponto
+        # sem o restante dos mocks. Basta confirmar que GeminiImageService foi instanciado.
+        with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
+             patch("app.services.ai.service.get_ai_provider", return_value=AsyncMock(
+                 generate_image_prompt=AsyncMock(return_value="prompt")
+             )), \
+             patch("app.services.image_service.GeminiImageService") as mock_gemini_cls, \
+             patch("app.workers.tasks.image_tasks._fetch_upload_token", new_callable=AsyncMock, return_value="tok"):
+            mock_gemini_cls.return_value.generate = AsyncMock(return_value=[])
+            try:
+                await _generate_images_async("listing-id")
+            except Exception:
+                pass  # pode falhar após o guard — o que importa é que chegou aqui
+
+        mock_gemini_cls.assert_called_once()
