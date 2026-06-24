@@ -92,3 +92,57 @@ class TestMarkFailed:
 
         with patch("app.database.worker_session", lambda: _mock_session(mock_db)):
             await _mark_failed("abc-123", "error")  # must not raise
+
+
+import asyncio
+from unittest.mock import patch, MagicMock
+
+from app.services.image_service import ImageRateLimitError
+
+
+class TestGenerateImagesRateLimit:
+    def test_rate_limit_error_uses_longer_countdown(self):
+        from app.workers.tasks.image_tasks import generate_images
+
+        retry_calls = []
+
+        def fake_retry(exc, countdown):
+            retry_calls.append(countdown)
+            raise exc  # simula o raise que o Celery faz internamente
+
+        mock_self = MagicMock()
+        mock_self.request.retries = 0
+        mock_self.max_retries = 2
+        mock_self.retry = fake_retry
+
+        with patch(
+            "app.workers.tasks.image_tasks.asyncio.run",
+            side_effect=ImageRateLimitError("quota hit"),
+        ):
+            with pytest.raises(ImageRateLimitError):
+                generate_images.run.__func__(mock_self, "listing-abc")
+
+        assert retry_calls == [60], f"Expected countdown=60, got {retry_calls}"
+
+    def test_generic_error_uses_short_countdown(self):
+        from app.workers.tasks.image_tasks import generate_images
+
+        retry_calls = []
+
+        def fake_retry(exc, countdown):
+            retry_calls.append(countdown)
+            raise exc
+
+        mock_self = MagicMock()
+        mock_self.request.retries = 0
+        mock_self.max_retries = 2
+        mock_self.retry = fake_retry
+
+        with patch(
+            "app.workers.tasks.image_tasks.asyncio.run",
+            side_effect=RuntimeError("network error"),
+        ):
+            with pytest.raises(RuntimeError):
+                generate_images.run.__func__(mock_self, "listing-abc")
+
+        assert retry_calls == [5], f"Expected countdown=5, got {retry_calls}"

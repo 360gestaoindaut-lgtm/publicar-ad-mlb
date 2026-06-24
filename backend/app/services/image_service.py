@@ -24,6 +24,10 @@ _PROMPT_SUFFIX = (
 )
 
 
+class ImageRateLimitError(Exception):
+    """Raised when Imagen API returns HTTP 429 — signals Celery to use longer backoff."""
+
+
 class GeminiImageService:
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -43,6 +47,10 @@ class GeminiImageService:
                 },
             )
         if not resp.is_success:
+            if resp.status_code == 429:
+                raise ImageRateLimitError(
+                    f"Imagen API rate limit (429): {resp.text[:300]}"
+                )
             raise httpx.HTTPStatusError(
                 f"Imagen API {resp.status_code}: {resp.text[:600]}",
                 request=resp.request,

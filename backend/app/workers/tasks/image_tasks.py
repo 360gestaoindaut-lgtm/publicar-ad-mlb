@@ -159,10 +159,16 @@ def generate_images(self, listing_id: str) -> dict:
     try:
         return asyncio.run(_generate_images_async(listing_id))
     except Exception as exc:
+        from app.services.image_service import ImageRateLimitError
+        countdown = (
+            60 * (2 ** self.request.retries)   # 60s, 120s — muito mais longo para 429
+            if isinstance(exc, ImageRateLimitError)
+            else 2 ** self.request.retries * 5  # 5s, 10s — erros comuns
+        )
         if self.request.retries >= self.max_retries:
             asyncio.run(_mark_failed(listing_id, str(exc)))
             raise
-        raise self.retry(exc=exc, countdown=2 ** self.request.retries * 5)
+        raise self.retry(exc=exc, countdown=countdown)
 
 
 @celery_app.task(name="app.workers.tasks.image_tasks.upload_images_to_ml", bind=True, max_retries=3)
