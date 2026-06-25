@@ -133,6 +133,40 @@ async def _my_task_async(listing_id: str) -> dict:
         ...
 ```
 
+### Batch dispatch atômico (SPEC-012)
+Nos gatilhos batch (`category_tasks.py`, `listing_service.submit_attributes`), a transição de status e o dispatch são feitos atomicamente:
+```python
+from sqlalchemy import update as sa_update
+result = await db.execute(
+    sa_update(Listing)
+    .where(Listing.id == listing_id, Listing.status == "pending_description")
+    .values(status="generating_images")
+    .execution_options(synchronize_session=False)
+)
+await db.commit()
+if result.rowcount == 1:
+    from celery import chain as celery_chain
+    from app.workers.tasks.image_tasks import generate_images
+    from app.workers.tasks.ai_tasks import generate_description
+    from app.workers.tasks.publish_tasks import publish_listing
+    celery_chain(
+        generate_images.si(listing_id),
+        generate_description.si(listing_id),
+        publish_listing.si(listing_id),
+    ).delay()
+```
+- `rowcount == 0` → outro worker ganhou a race condition, não despacha nada
+- `.si()` (não `.s()`) — tasks não passam resultado para o próximo step
+- `execution_options(synchronize_session=False)` obrigatório no async SQLAlchemy
+
+### Idempotência em workers batch
+No início de `_generate_images_async`, antes de qualquer processamento:
+```python
+if listing.status != "generating_images":
+    return {"listing_id": listing_id, "skipped": True}
+```
+Protege contra double-dispatch (retry ou bug de enfileiramento duplo).
+
 ### Sessão de banco nos workers
 `worker_session()` está em `app.database` — usar como context manager async.
 Nos endpoints, usa-se `Depends(get_db)` de `app.core.dependencies`.
@@ -187,7 +221,7 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 - `ai/base.py`, `ai/gemini.py`, `ai/claude.py`, `ai/prompts.py`, `ai/service.py` — providers de IA
 - `category_service.py` — CategoryService: prediz categoria ML + salva atributos; pré-preenche BRAND, MODEL, GTIN, SELLER_SKU, dimensões, peso com unidades corretas
 - `listing_service.py` — ListingService: CRUD + pipeline
-- `image_service.py` — GeminiImageService (Imagen 4 fast) + MLPictureService + `validate_image()` + `ensure_dimensions()` (upscale para 1024px antes do upload)
+- `image_service.py` — GeminiImageService (Imagen 4 fast) + MLPictureService + `validate_image()` + `ensure_dimensions()` (upscale para 1024px antes do upload) + `ImageRateLimitError` (HTTP 429 → backoff 60s×2^retries)
 - `publish_service.py` — PublishService + `get_valid_access_token()` + MLValidationError
 - `product_service.py` — ProductService (multi-tenant via `_base_query()`): list, get, create, update, upsert
 - `product_import_service.py` — parser CSV/XLSX de produtos (auto-detect delimitador)
@@ -200,10 +234,15 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 
 ### backend/app/workers/tasks/
 - `ai_tasks.py` — `generate_title`, `generate_description`
-- `category_tasks.py` — `predict_category` (avança batch para imagens se não houver attrs pendentes)
-- `image_tasks.py` — `generate_images` (reutiliza imagens de SKU existente via ProductImage; `ensure_dimensions` antes do upload)
+- `category_tasks.py` — `predict_category` (batch: atomic UPDATE + Celery chain se sem attrs pendentes)
+- `image_tasks.py` — `generate_images` (`_fetch_upload_token` para refresh automático de token ML; guard de idempotência; reutiliza imagens via ProductImage; `ensure_dimensions` antes do upload)
 - `publish_tasks.py` — `publish_listing` (MLValidationError → failed sem retry)
 - `batch_tasks.py` — `process_batch` (lê planilha, cria listings, dispara pipeline)
+
+### backend/tests/
+- `test_image_service.py` — `TestEnsureDimensions` (5 casos), `TestGeminiImageService429` (2 casos)
+- `test_image_tasks.py` — `TestMarkFailed` (4), `TestGenerateImagesRateLimit` (2), `TestFetchUploadToken` (2), `TestGenerateImagesIdempotency` (2)
+- `test_batch_chain.py` — `TestCategoryTaskChainDispatch` (3), `TestSubmitAttributesChainDispatch` (1), `TestRemovedInternalDispatch` (2)
 
 ### Migrations aplicadas (ordem cronológica)
 - `a7519acf4e00` — schema inicial (8 tabelas)
