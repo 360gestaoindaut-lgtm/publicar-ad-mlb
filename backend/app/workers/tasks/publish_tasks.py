@@ -56,7 +56,7 @@ async def _publish_listing_async(listing_id: str) -> dict:
         )
 
         listing.mlb_id = mlb_id
-        listing.status = "published"
+        listing.status = "published_paused"
         await db.commit()
 
     return {"listing_id": listing_id, "mlb_id": mlb_id}

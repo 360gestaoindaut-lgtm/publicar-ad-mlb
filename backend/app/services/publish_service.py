@@ -87,6 +87,7 @@ class PublishService:
             "listing_type_id": listing.listing_type_id,
             "pictures": pics_payload,
             "attributes": attrs_payload,
+            "status": "paused",
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
