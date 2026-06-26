@@ -50,6 +50,7 @@ class ListingSummary(BaseModel):
     sku_brand: str
     selected_title: Optional[str]
     status: str
+    failed_step: Optional[str] = None
     created_via: str
     mlb_id: Optional[str]
     created_at: datetime
