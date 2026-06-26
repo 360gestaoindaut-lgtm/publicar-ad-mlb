@@ -1,15 +1,17 @@
 "use client"
 
 import Link from "next/link"
-import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import { CardContent, CardHeader } from "@/components/ui/card"
 import { ListingStatusBadge } from "./ListingStatusBadge"
 import type { ListingSummary } from "@/types/listing"
 import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { User, Upload } from "lucide-react"
 
-interface Props {
+interface ListingCardProps {
   listing: ListingSummary
+  selected?: boolean
+  onSelect?: (id: string, checked: boolean) => void
 }
 
 function OriginBadge({ via }: { via: "manual" | "batch" }) {
@@ -29,7 +31,7 @@ function OriginBadge({ via }: { via: "manual" | "batch" }) {
   )
 }
 
-export function ListingCard({ listing }: Props) {
+export function ListingCard({ listing, selected = false, onSelect }: ListingCardProps) {
   const timeAgo = formatDistanceToNow(new Date(listing.updated_at), {
     addSuffix: true,
     locale: ptBR,
@@ -37,30 +39,59 @@ export function ListingCard({ listing }: Props) {
 
   return (
     <Link href={`/listings/${listing.id}`}>
-      <Card className="cursor-pointer hover:shadow-md transition-shadow border border-border">
-        <CardHeader className="pb-2 pt-3 px-4">
-          <div className="flex items-start justify-between gap-2">
-            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-              {listing.sku_brand}
-            </span>
-            <ListingStatusBadge status={listing.status} />
-          </div>
-        </CardHeader>
-        <CardContent className="px-4 pb-3">
-          <p className="text-sm font-medium text-foreground line-clamp-2 min-h-[2.5rem]">
-            {listing.selected_title || (
-              <span className="text-muted-foreground italic">Título não gerado</span>
+      <div className="relative group rounded-lg border border-border bg-card p-3 text-sm shadow-sm hover:shadow-md transition-shadow">
+        {onSelect && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={(e) => onSelect(listing.id, e.target.checked)}
+            onClick={(e) => e.stopPropagation()}
+            className="absolute top-2 left-2 h-4 w-4 rounded border-slate-300 cursor-pointer"
+          />
+        )}
+        <div className={onSelect ? "pl-6" : ""}>
+          <CardHeader className="pb-2 pt-3 px-4">
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                {listing.sku_brand}
+              </span>
+              <ListingStatusBadge status={listing.status} />
+            </div>
+          </CardHeader>
+          <CardContent className="px-4 pb-3">
+            <p className="text-sm font-medium text-foreground line-clamp-2 min-h-[2.5rem]">
+              {listing.selected_title || (
+                <span className="text-muted-foreground italic">Título não gerado</span>
+              )}
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs text-muted-foreground">{timeAgo}</span>
+              <OriginBadge via={listing.created_via} />
+            </div>
+            {listing.mlb_id && (
+              <span className="block text-xs text-blue-600 font-mono mt-1">{listing.mlb_id}</span>
             )}
-          </p>
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-xs text-muted-foreground">{timeAgo}</span>
-            <OriginBadge via={listing.created_via} />
+          </CardContent>
+        </div>
+
+        {/* Inline error subcard */}
+        {listing.status === "failed" && (
+          <div className="mt-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 flex items-center justify-between gap-2">
+            <div className="text-xs text-red-700">
+              <span className="font-medium">Falha</span>
+              {listing.failed_step && (
+                <span className="text-red-500 ml-1">em {listing.failed_step.replace(/_/g, " ")}</span>
+              )}
+            </div>
+            <a
+              href={`/listings/${listing.id}`}
+              className="text-xs text-red-600 underline underline-offset-2 hover:text-red-800 whitespace-nowrap"
+            >
+              Ver detalhes
+            </a>
           </div>
-          {listing.mlb_id && (
-            <span className="block text-xs text-blue-600 font-mono mt-1">{listing.mlb_id}</span>
-          )}
-        </CardContent>
-      </Card>
+        )}
+      </div>
     </Link>
   )
 }
