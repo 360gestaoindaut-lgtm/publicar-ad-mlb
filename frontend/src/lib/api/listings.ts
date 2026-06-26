@@ -12,6 +12,7 @@ export interface CreateListingPayload {
   price: number
   stock_quantity: number
   condition: Condition
+  listing_type_id?: string
 }
 
 export async function createListing(

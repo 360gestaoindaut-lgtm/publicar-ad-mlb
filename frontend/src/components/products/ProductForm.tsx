@@ -55,15 +55,15 @@ function empty(p?: Product): ProductFormData {
     model: p.model ?? "",
     ean: p.ean ?? "",
     ncm: p.ncm ?? "",
-    fiscal_origin: p.fiscal_origin != null ? String(p.fiscal_origin) as any : "",
+    fiscal_origin: p.fiscal_origin,
     icms_cst: p.icms_cst ?? "",
     icms_rate: p.icms_rate ?? "",
     pis_cst: p.pis_cst ?? "",
     cofins_cst: p.cofins_cst ?? "",
     weight_kg: p.weight_kg ?? "",
-    length_cm: p.length_cm != null ? String(p.length_cm) as any : "",
-    width_cm: p.width_cm != null ? String(p.width_cm) as any : "",
-    height_cm: p.height_cm != null ? String(p.height_cm) as any : "",
+    length_cm: p.length_cm,
+    width_cm: p.width_cm,
+    height_cm: p.height_cm,
     acquisition_cost: p.acquisition_cost ?? "",
     product_group: p.product_group ?? "",
     technical_reference: p.technical_reference ?? "",
@@ -87,16 +87,16 @@ function toPayload(form: Record<string, string>): ProductFormData {
     model: str(form.model),
     ean: str(form.ean),
     ncm: str(form.ncm),
-    fiscal_origin: num(form.fiscal_origin) as any,
+    fiscal_origin: num(form.fiscal_origin),
     icms_cst: str(form.icms_cst),
-    icms_rate: dec(form.icms_rate) as any,
+    icms_rate: dec(form.icms_rate),
     pis_cst: str(form.pis_cst),
     cofins_cst: str(form.cofins_cst),
-    weight_kg: dec(form.weight_kg) as any,
-    length_cm: num(form.length_cm) as any,
-    width_cm: num(form.width_cm) as any,
-    height_cm: num(form.height_cm) as any,
-    acquisition_cost: dec(form.acquisition_cost) as any,
+    weight_kg: dec(form.weight_kg),
+    length_cm: num(form.length_cm),
+    width_cm: num(form.width_cm),
+    height_cm: num(form.height_cm),
+    acquisition_cost: dec(form.acquisition_cost),
     product_group: str(form.product_group),
     technical_reference: str(form.technical_reference),
     vehicle_application: str(form.vehicle_application),
@@ -133,8 +133,8 @@ export function ProductForm({ initial, onSubmit }: Props) {
       await onSubmit(toPayload(form))
       toast.success(isEdit ? "Produto atualizado." : "Produto criado.")
       router.push("/products")
-    } catch (err: any) {
-      toast.error(err?.message || "Erro ao salvar produto")
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Erro ao salvar produto")
     } finally {
       setSaving(false)
     }
