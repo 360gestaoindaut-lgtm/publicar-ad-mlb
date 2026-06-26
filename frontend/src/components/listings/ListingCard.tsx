@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import Link from "next/link"
 import { CardContent, CardHeader } from "@/components/ui/card"
 import { ListingStatusBadge } from "./ListingStatusBadge"
@@ -33,6 +34,9 @@ function OriginBadge({ via }: { via: "manual" | "batch" }) {
 }
 
 export function ListingCard({ listing, selected = false, onSelect }: ListingCardProps) {
+  const [activating, setActivating] = useState(false)
+  const [activateError, setActivateError] = useState<string | null>(null)
+
   const timeAgo = formatDistanceToNow(new Date(listing.updated_at), {
     addSuffix: true,
     locale: ptBR,
@@ -74,19 +78,29 @@ export function ListingCard({ listing, selected = false, onSelect }: ListingCard
             )}
           </CardContent>
           {listing.status === "published_paused" && (
-            <button
-              onClick={async (e) => {
-                e.stopPropagation()
-                try {
-                  await activateListing(listing.id)
-                } catch {
-                  // polling de 8s mostrará o estado atual
-                }
-              }}
-              className="mt-2 w-full text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded px-2 py-1"
-            >
-              Ativar anúncio
-            </button>
+            <>
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  setActivating(true)
+                  setActivateError(null)
+                  try {
+                    await activateListing(listing.id)
+                  } catch {
+                    setActivateError("Falha ao ativar. Tente novamente.")
+                  } finally {
+                    setActivating(false)
+                  }
+                }}
+                disabled={activating}
+                className="mt-2 w-full text-xs font-medium bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded px-2 py-1"
+              >
+                {activating ? "Ativando…" : "Ativar anúncio"}
+              </button>
+              {activateError && (
+                <p className="mt-1 text-xs text-red-500">{activateError}</p>
+              )}
+            </>
           )}
         </div>
 
