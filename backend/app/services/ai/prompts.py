@@ -1,3 +1,38 @@
+import re
+
+
+# ── Variable resolution ────────────────────────────────────────────────────────
+
+_TOKEN_MAP = {
+    "{descricao_erp}":       lambda d: d.get("sku_description") or "",
+    "{marca}":                lambda d: d.get("sku_brand") or "",
+    "{modelo}":               lambda d: d.get("sku_model") or "",
+    "{referencia_tecnica}":   lambda d: d.get("technical_reference") or "",
+    "{aplicacao_veiculo}":    lambda d: d.get("vehicle_application") or "",
+    "{cor}":                  lambda d: d.get("color") or "",
+    "{tamanho}":              lambda d: d.get("size") or "",
+    "{capacidade}":           lambda d: d.get("capacity") or "",
+    "{material}":             lambda d: d.get("material") or "",
+    "{genero}":               lambda d: d.get("gender") or "",
+    "{condicao}":             lambda d: "Novo" if d.get("condition") == "new" else "Usado",
+    "{ean}":                  lambda d: d.get("ean") or "",
+    "{seo}":                  lambda d: d.get("seo_context") or "",
+}
+
+_DEFAULT_STRUCTURE = "{descricao_erp} {marca}"
+
+
+def _resolve_structure(structure: str, data: dict) -> str:
+    result = structure
+    for token, fn in _TOKEN_MAP.items():
+        result = result.replace(token, fn(data))
+    # Collapse multiple spaces left by empty substitutions
+    result = re.sub(r"\s+", " ", result).strip()
+    return result
+
+
+# ── Title prompt ───────────────────────────────────────────────────────────────
+
 def build_title_prompt(
     sku_description: str,
     sku_brand: str,
@@ -5,10 +40,41 @@ def build_title_prompt(
     ean: str | None = None,
     seo_context: str | None = None,
     batch_mode: bool = False,
+    title_config: dict | None = None,
+    sku_model: str | None = None,
+    technical_reference: str | None = None,
+    vehicle_application: str | None = None,
+    color: str | None = None,
+    size: str | None = None,
+    capacity: str | None = None,
+    material: str | None = None,
+    gender: str | None = None,
 ) -> str:
     condition_pt = "Novo" if condition == "new" else "Usado"
+
+    product_data = {
+        "sku_description": sku_description,
+        "sku_brand": sku_brand,
+        "sku_model": sku_model or "",
+        "technical_reference": technical_reference or "",
+        "vehicle_application": vehicle_application or "",
+        "color": color or "",
+        "size": size or "",
+        "capacity": capacity or "",
+        "material": material or "",
+        "gender": gender or "",
+        "condition": condition,
+        "ean": ean or "",
+        "seo_context": seo_context or "",
+    }
+
+    structure = title_config["structure"] if title_config else _DEFAULT_STRUCTURE
+    extra_rules = title_config.get("rules") or "" if title_config else ""
+    resolved_example = _resolve_structure(structure, product_data)
+
     ean_line = f"EAN/GTIN: {ean}" if ean else ""
-    seo_line = f"Contexto SEO adicional (use como orientação): {seo_context}" if seo_context else ""
+    seo_line = f"Contexto SEO adicional: {seo_context}" if seo_context else ""
+    extra_rules_line = f"\nREGRAS ESPECÍFICAS DESTE SELLER:\n{extra_rules}" if extra_rules else ""
 
     if batch_mode:
         return f"""Você é um especialista em SEO para o Mercado Livre Brasil.
@@ -17,12 +83,13 @@ Gere EXATAMENTE 1 título otimizado para o produto abaixo.
 REGRAS OBRIGATÓRIAS:
 - Idioma: PORTUGUÊS DO BRASIL (nunca inglês, nunca espanhol)
 - Máximo 60 caracteres (incluindo espaços)
-- Estrutura: [tipo do produto] [marca] [modelo/referência] [atributo mais buscado]
+- Estrutura preferencial: {structure}
+- Exemplo de aplicação da estrutura: {resolved_example}
+- Coloque os termos mais específicos e buscados nos primeiros 30 caracteres
 - Não use: pontuação desnecessária, maiúsculas em excesso, artigos (o, a, os, as)
 - Palavras PROIBIDAS pelo ML: Melhor, Promoção, Oferta, Barato, Grátis, Desconto
-- Priorize termos que compradores realmente buscam no Brasil
 - Máximo de informação útil no mínimo de palavras
-
+{extra_rules_line}
 PRODUTO:
 Descrição do ERP: {sku_description}
 Marca: {sku_brand}
@@ -30,7 +97,7 @@ Condição: {condition_pt}
 {ean_line}
 {seo_line}
 
-Responda EXCLUSIVAMENTE em JSON válido no formato abaixo, sem texto antes ou depois, sem markdown:
+Responda EXCLUSIVAMENTE em JSON válido, sem texto antes ou depois, sem markdown:
 {{"title": "título em português aqui"}}"""
 
     return f"""Você é um especialista em SEO para o Mercado Livre Brasil.
@@ -38,11 +105,13 @@ Crie 3 variações de título para um anúncio do produto abaixo.
 
 REGRAS OBRIGATÓRIAS:
 - Máximo 60 caracteres por título (incluindo espaços)
-- Estrutura: [tipo do produto] [marca] [modelo/referência] [atributo mais buscado]
+- Estrutura preferencial: {structure}
+- Exemplo de aplicação da estrutura: {resolved_example}
+- Coloque os termos mais específicos e buscados nos primeiros 30 caracteres
 - Não use: pontuação desnecessária, maiúsculas em excesso, artigos (o, a, os, as)
 - Palavras PROIBIDAS pelo ML: Melhor, Promoção, Oferta, Barato, Grátis, Desconto
 - Priorize termos que compradores realmente buscam no Brasil
-
+{extra_rules_line}
 PRODUTO:
 Descrição do ERP: {sku_description}
 Marca: {sku_brand}
@@ -53,6 +122,8 @@ Condição: {condition_pt}
 Responda EXCLUSIVAMENTE em JSON válido, sem markdown, sem ```json:
 {{"titles": [{{"title": "título aqui", "score": 9.2, "rationale": "motivo breve"}}, {{"title": "título aqui", "score": 8.7, "rationale": "motivo breve"}}, {{"title": "título aqui", "score": 8.1, "rationale": "motivo breve"}}]}}"""
 
+
+# ── Image prompt ───────────────────────────────────────────────────────────────
 
 def build_image_prompt_request(brand: str, title: str, description: str) -> str:
     return f"""You are an expert prompt engineer for Google Imagen 4 AI image generation.
@@ -80,6 +151,8 @@ Description: {description}
 
 Output ONLY the Imagen prompt. No explanations, no markdown, no quotes."""
 
+
+# ── Description prompt ─────────────────────────────────────────────────────────
 
 def build_description_prompt(listing_data: dict) -> str:
     attrs_text = "\n".join(
