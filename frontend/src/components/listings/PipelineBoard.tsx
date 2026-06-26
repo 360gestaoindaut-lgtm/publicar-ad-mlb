@@ -58,7 +58,7 @@ const COLUMNS: {
   {
     id: "publicados",
     title: "Publicados",
-    statuses: ["published"],
+    statuses: ["published", "published_paused"],
     failedSteps: [],
     colorClass: "border-t-green-400",
   },

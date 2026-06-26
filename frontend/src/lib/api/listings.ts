@@ -165,3 +165,7 @@ export async function bulkFillAttribute(payload: {
 export async function getListingsForGrid(): Promise<ListingAttributesRow[]> {
   return apiFetch<ListingAttributesRow[]>("/api/v1/listings/bulk/attributes")
 }
+
+export async function activateListing(id: string): Promise<{ status: string }> {
+  return apiFetch(`/listings/${id}/activate`, { method: "POST" })
+}

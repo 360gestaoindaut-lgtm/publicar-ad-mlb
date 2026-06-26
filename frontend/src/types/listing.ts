@@ -13,6 +13,7 @@ export type ListingStatus =
   | "ready_to_publish"
   | "publishing"
   | "published"
+  | "published_paused"
   | "failed"
 
 export interface ListingSummary {
@@ -100,6 +101,7 @@ export const STATUS_LABELS: Record<ListingStatus, string> = {
   ready_to_publish: "Pronto para publicar",
   publishing: "Publicando",
   published: "Publicado",
+  published_paused: "Pausado",
   failed: "Com erro",
 }
 

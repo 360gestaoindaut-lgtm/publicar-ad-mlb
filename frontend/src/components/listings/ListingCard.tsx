@@ -4,6 +4,7 @@ import Link from "next/link"
 import { CardContent, CardHeader } from "@/components/ui/card"
 import { ListingStatusBadge } from "./ListingStatusBadge"
 import type { ListingSummary } from "@/types/listing"
+import { activateListing } from "@/lib/api/listings"
 import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { User, Upload } from "lucide-react"
@@ -72,6 +73,22 @@ export function ListingCard({ listing, selected = false, onSelect }: ListingCard
               <span className="block text-xs text-blue-600 font-mono mt-1">{listing.mlb_id}</span>
             )}
           </CardContent>
+          {listing.status === "published_paused" && (
+            <button
+              onClick={async (e) => {
+                e.stopPropagation()
+                try {
+                  await activateListing(listing.id)
+                  window.location.reload()
+                } catch {
+                  // polling de 8s mostrará o estado atual
+                }
+              }}
+              className="mt-2 w-full text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded px-2 py-1"
+            >
+              Ativar anúncio
+            </button>
+          )}
         </div>
 
         {/* Inline error subcard */}
