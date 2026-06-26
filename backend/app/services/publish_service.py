@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 import httpx
+from fastapi import HTTPException, status
 
 from app.config import get_settings
 from app.core.security import decrypt_value, encrypt_value
@@ -52,6 +53,26 @@ async def get_valid_access_token(seller, db) -> str:
 
 
 class PublishService:
+    def __init__(self, db=None) -> None:
+        self.db = db
+
+    async def activate_listing(self, listing, seller) -> None:
+        token = await get_valid_access_token(seller, self.db)
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                f"https://api.mercadolibre.com/items/{listing.mlb_id}",
+                json={"status": "active"},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15.0,
+            )
+        if response.status_code not in (200, 204):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Erro ao ativar anúncio no ML: {response.text}",
+            )
+        listing.status = "published"
+        await self.db.commit()
+
     async def publish(
         self,
         listing,

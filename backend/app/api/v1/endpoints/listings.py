@@ -1,11 +1,12 @@
 from uuid import UUID
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.dependencies import get_db, get_current_user, get_active_seller
 from app.models.listing import Listing
 from app.models.listing_description import ListingDescription
+from app.models.seller import Seller
 from app.models.listing_title import ListingTitle
 from app.models.listing_attribute import ListingAttribute
 from app.models.listing_job import ListingJob
@@ -20,6 +21,7 @@ from app.schemas.listing import (
 )
 from app.schemas.attribute import AttributesSubmitRequest
 from app.services.listing_service import ListingService
+from app.services.publish_service import PublishService
 
 router = APIRouter(prefix="/listings", tags=["listings"])
 
@@ -201,3 +203,29 @@ async def publish_listing(
     listing = await svc.get_or_404(listing_id, active_seller.id)
     await svc.trigger_publish(listing)
     return ListingSummary.model_validate(listing)
+
+
+@router.post("/{listing_id}/activate")
+async def activate_listing(
+    listing_id: UUID,
+    active_seller=Depends(get_active_seller),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Listing).where(
+            Listing.id == listing_id,
+            Listing.seller_id == active_seller.id,
+        )
+    )
+    listing = result.scalar_one_or_none()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Anúncio não encontrado")
+    if listing.status != "published_paused":
+        raise HTTPException(status_code=422, detail="Anúncio não está pausado")
+
+    seller_result = await db.execute(select(Seller).where(Seller.id == active_seller.id))
+    seller = seller_result.scalar_one()
+
+    await PublishService(db).activate_listing(listing, seller)
+    return {"status": "published"}
