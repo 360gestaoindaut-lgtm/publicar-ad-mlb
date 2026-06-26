@@ -34,6 +34,7 @@ class Listing(Base, TimestampMixin):
     )
 
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="draft")
+    failed_step: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_via: Mapped[str] = mapped_column(String(10), nullable=False, default="manual")
     ml_category_id: Mapped[Optional[str]] = mapped_column(String(20))
     mlb_id: Mapped[Optional[str]] = mapped_column(String(20), unique=True)

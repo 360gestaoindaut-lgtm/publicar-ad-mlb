@@ -85,6 +85,7 @@ async def _set_failed(listing_id: str, error_message: str) -> None:
 
     async with worker_session() as db:
         listing = (await db.execute(select(Listing).where(Listing.id == listing_id))).scalar_one()
+        listing.failed_step = listing.status  # capture column for UI routing
         listing.status = "failed"
         listing.error_message = error_message[:2000]
         await db.commit()
