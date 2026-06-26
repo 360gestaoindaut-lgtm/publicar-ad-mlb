@@ -14,8 +14,9 @@ from app.schemas.listing import ListingCreate, ListingPage, ListingSummary
 
 
 class ListingService:
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, seller_id=None) -> None:
         self.db = db
+        self.seller_id = seller_id
 
     async def create(self, data: ListingCreate, user: User, seller: Seller) -> Listing:
         listing = Listing(

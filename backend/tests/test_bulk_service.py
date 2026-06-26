@@ -17,12 +17,12 @@ def make_listing(status: str, seller_id=None):
 
 
 def make_title(score: float | None, created_at=None):
-    from datetime import datetime
+    from datetime import datetime, timezone
     t = MagicMock()
     t.title_text = f"Título score={score}"
     t.ai_score = score
     t.selected = False
-    t.created_at = created_at or datetime.utcnow()
+    t.created_at = created_at or datetime.now(timezone.utc)
     return t
 
 
