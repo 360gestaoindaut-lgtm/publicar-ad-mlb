@@ -82,5 +82,5 @@ class SellerTitleConfigService:
 
     async def delete(self, config_id: _uuid.UUID) -> None:
         cfg = await self.get_or_404(config_id)
-        await self.db.delete(cfg)
+        self.db.delete(cfg)
         await self.db.commit()
