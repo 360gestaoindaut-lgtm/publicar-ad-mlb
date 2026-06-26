@@ -145,7 +145,7 @@ async def _mark_failed(listing_id: str, error: str) -> None:
             listing = (
                 await db.execute(select(Listing).where(Listing.id == listing_id))
             ).scalar_one_or_none()
-            if listing:
+            if listing and listing.status != "failed":
                 listing.failed_step = listing.status  # capture column for UI routing
                 listing.status = "failed"
                 listing.error_message = error[:500]
