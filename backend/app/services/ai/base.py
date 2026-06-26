@@ -11,8 +11,17 @@ class AIProvider(ABC):
         ean: str | None = None,
         seo_context: str | None = None,
         batch_mode: bool = False,
+        title_config: dict | None = None,
+        sku_model: str | None = None,
+        technical_reference: str | None = None,
+        vehicle_application: str | None = None,
+        color: str | None = None,
+        size: str | None = None,
+        capacity: str | None = None,
+        material: str | None = None,
+        gender: str | None = None,
     ) -> list[dict]:
-        """Retorna lista de {title, score, rationale}. batch_mode retorna lista com 1 item, auto-selecionado."""
+        """Retorna lista de {title, score, rationale}. batch_mode retorna lista com 1 item."""
 
     @abstractmethod
     async def generate_description(self, listing_data: dict) -> str:

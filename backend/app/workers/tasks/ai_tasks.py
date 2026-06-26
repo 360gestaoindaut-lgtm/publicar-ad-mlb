@@ -11,12 +11,24 @@ async def _generate_title_async(
     from app.database import worker_session
     from app.models.listing import Listing
     from app.models.listing_title import ListingTitle
+    from app.models.product import Product
     from app.services.ai.service import get_ai_provider
+    from app.services.seller_title_config_service import SellerTitleConfigService
     from sqlalchemy import select
 
     async with worker_session() as db:
         result = await db.execute(select(Listing).where(Listing.id == listing_id))
         listing = result.scalar_one()
+
+        # Fetch product for structured fields and product_group
+        product: Product | None = None
+        if listing.product_id:
+            p_result = await db.execute(select(Product).where(Product.id == listing.product_id))
+            product = p_result.scalar_one_or_none()
+
+        # Resolve seller title config
+        svc = SellerTitleConfigService(db, listing.seller_id)
+        title_config = await svc.resolve(product.product_group if product else None)
 
         provider = get_ai_provider()
         titles = await provider.generate_titles(
@@ -26,6 +38,15 @@ async def _generate_title_async(
             ean=ean,
             seo_context=seo_context,
             batch_mode=batch_mode,
+            title_config=title_config,
+            sku_model=listing.sku_model,
+            technical_reference=product.technical_reference if product else None,
+            vehicle_application=product.vehicle_application if product else None,
+            color=product.color if product else None,
+            size=product.size if product else None,
+            capacity=product.capacity if product else None,
+            material=product.material if product else None,
+            gender=product.gender if product else None,
         )
 
         for t in titles:
@@ -37,7 +58,6 @@ async def _generate_title_async(
             ))
 
         if batch_mode:
-            # Auto-seleciona o único título gerado e avança para predição de categoria
             listing.selected_title = titles[0]["title"]
             listing.status = "predicting_category"
         else:

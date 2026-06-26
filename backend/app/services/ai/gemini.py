@@ -43,8 +43,22 @@ class GeminiProvider(AIProvider):
         ean: str | None = None,
         seo_context: str | None = None,
         batch_mode: bool = False,
+        title_config: dict | None = None,
+        sku_model: str | None = None,
+        technical_reference: str | None = None,
+        vehicle_application: str | None = None,
+        color: str | None = None,
+        size: str | None = None,
+        capacity: str | None = None,
+        material: str | None = None,
+        gender: str | None = None,
     ) -> list[dict]:
-        prompt = build_title_prompt(sku_description, sku_brand, condition, ean, seo_context, batch_mode)
+        prompt = build_title_prompt(
+            sku_description, sku_brand, condition, ean, seo_context, batch_mode,
+            title_config=title_config, sku_model=sku_model,
+            technical_reference=technical_reference, vehicle_application=vehicle_application,
+            color=color, size=size, capacity=capacity, material=material, gender=gender,
+        )
         text = await self._call(prompt, max_tokens=500 if batch_mode else 2000, temperature=0.6)
         if batch_mode:
             parsed = json.loads(_extract_json(text))
