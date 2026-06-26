@@ -132,7 +132,7 @@ export default function SettingsPage() {
         id: editingId,
         payload: {
           title_structure: formData.title_structure.trim(),
-          title_rules: formData.title_rules.trim() || undefined,
+          title_rules: formData.title_rules.trim() || null,
           is_default: formData.is_default,
         },
       })
@@ -140,7 +140,7 @@ export default function SettingsPage() {
       createMutation.mutate({
         product_group: formData.product_group.trim(),
         title_structure: formData.title_structure.trim(),
-        title_rules: formData.title_rules.trim() || undefined,
+        title_rules: formData.title_rules.trim() || null,
         is_default: formData.is_default,
       })
     }

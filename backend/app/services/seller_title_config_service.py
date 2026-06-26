@@ -72,8 +72,7 @@ class SellerTitleConfigService:
                     other.is_default = False
         if payload.title_structure is not None:
             cfg.title_structure = payload.title_structure
-        if payload.title_rules is not None:
-            cfg.title_rules = payload.title_rules
+        cfg.title_rules = payload.title_rules or None
         if payload.is_default is not None:
             cfg.is_default = payload.is_default
         await self.db.commit()
