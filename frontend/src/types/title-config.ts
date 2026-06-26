@@ -12,12 +12,12 @@ export interface TitleConfig {
 export interface TitleConfigCreate {
   product_group: string
   title_structure: string
-  title_rules?: string
+  title_rules?: string | null
   is_default?: boolean
 }
 
 export interface TitleConfigUpdate {
   title_structure?: string
-  title_rules?: string
+  title_rules?: string | null
   is_default?: boolean
 }
