@@ -96,6 +96,31 @@ Chaves relevantes:
 
 ---
 
+## Uso do Subagent-Driven Development (SDD)
+
+Antes de qualquer implementação, Claude deve avaliar a complexidade e **anunciar a decisão** antes de começar, aguardando confirmação do usuário.
+
+### Quando usar SDD
+- 5 ou mais tasks independentes
+- Múltiplos arquivos com integração entre si (ex: migration + service + endpoint + frontend)
+- Risco real de regressão em funcionalidades existentes
+- Features estruturais (auth, pipeline, multi-tenant, workers Celery)
+
+### Quando implementar direto (sem SDD)
+- Até 4 arquivos modificados
+- Spec clara com código já definido
+- Baixo risco de regressão
+- Bug fixes, ajustes de UI, novos campos simples, endpoints CRUD isolados
+
+### Anúncio obrigatório antes de implementar
+Claude deve sempre declarar, antes de começar qualquer implementação:
+
+> "Esta feature é **[simples/complexa]** — vou implementar **[diretamente/via SDD]** porque **[razão em uma linha]**."
+
+Aguardar confirmação do usuário antes de prosseguir.
+
+---
+
 ## Convenções de código
 
 - **API**: REST, sempre versionada em `/api/v1/`
