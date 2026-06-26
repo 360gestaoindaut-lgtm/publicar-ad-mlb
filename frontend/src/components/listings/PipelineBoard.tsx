@@ -154,7 +154,6 @@ export function PipelineBoard() {
       <div className="flex gap-4 overflow-x-auto pb-20 min-h-[calc(100vh-12rem)]">
         {COLUMNS.map((col) => {
           const items = getColumnItems(col)
-          const colSelectedIds = items.filter((i) => selectedIds.has(i.id)).map((i) => i.id)
           const allColSelected = items.length > 0 && items.every((i) => selectedIds.has(i.id))
 
           return (
