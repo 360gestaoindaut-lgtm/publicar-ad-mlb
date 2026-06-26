@@ -2,6 +2,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
+from sqlalchemy import update as sa_update, delete as sa_delete
 from app.models.listing import Listing
 from app.models.listing_title import ListingTitle
 from app.models.listing_attribute import ListingAttribute
@@ -11,6 +12,7 @@ from app.models.listing_job import ListingJob
 from app.models.user import User
 from app.models.seller import Seller
 from app.schemas.listing import ListingCreate, ListingPage, ListingSummary
+from app.schemas.bulk import BulkItemResult, BulkResult
 
 
 class ListingService:
@@ -271,3 +273,229 @@ class ListingService:
 
         from app.workers.tasks.publish_tasks import publish_listing
         publish_listing.delay(str(listing.id))
+
+    # ------------------------------------------------------------------
+    # Bulk methods
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _bulk_result(results: list[BulkItemResult]) -> BulkResult:
+        return BulkResult(
+            processed=sum(1 for r in results if r.success),
+            failed=sum(1 for r in results if not r.success),
+            results=results,
+        )
+
+    async def bulk_start_pipeline(self, listing_ids: list) -> BulkResult:
+        results: list[BulkItemResult] = []
+        for lid in listing_ids:
+            try:
+                r = await self.db.execute(
+                    sa_update(Listing)
+                    .where(Listing.id == lid, Listing.seller_id == self.seller_id, Listing.status == "draft")
+                    .values(status="generating_title")
+                    .execution_options(synchronize_session=False)
+                )
+                await self.db.commit()
+                if r.rowcount == 0:
+                    results.append(BulkItemResult(listing_id=lid, success=False, error="estado inválido"))
+                    continue
+                from app.workers.tasks.ai_tasks import generate_title
+                generate_title.delay(str(lid))
+                results.append(BulkItemResult(listing_id=lid, success=True))
+            except Exception as e:
+                await self.db.rollback()
+                results.append(BulkItemResult(listing_id=lid, success=False, error=str(e)))
+        return self._bulk_result(results)
+
+    async def bulk_approve_titles(self, listing_ids: list) -> BulkResult:
+        results: list[BulkItemResult] = []
+        for lid in listing_ids:
+            try:
+                r = await self.db.execute(
+                    select(Listing).where(Listing.id == lid, Listing.seller_id == self.seller_id)
+                )
+                listing = r.scalar_one_or_none()
+                if not listing or listing.status != "pending_title_approval":
+                    results.append(BulkItemResult(listing_id=lid, success=False, error="estado inválido"))
+                    continue
+                title_r = await self.db.execute(
+                    select(ListingTitle)
+                    .where(ListingTitle.listing_id == lid)
+                    .order_by(ListingTitle.ai_score.desc().nulls_last(), ListingTitle.created_at.asc())
+                    .limit(1)
+                )
+                top = title_r.scalar_one_or_none()
+                if not top:
+                    results.append(BulkItemResult(listing_id=lid, success=False, error="nenhum título encontrado"))
+                    continue
+                listing.selected_title = top.title_text
+                top.selected = True
+                listing.status = "predicting_category"
+                await self.db.commit()
+                from app.workers.tasks.category_tasks import predict_category
+                predict_category.delay(str(lid))
+                results.append(BulkItemResult(listing_id=lid, success=True))
+            except Exception as e:
+                await self.db.rollback()
+                results.append(BulkItemResult(listing_id=lid, success=False, error=str(e)))
+        return self._bulk_result(results)
+
+    async def bulk_reject_titles(self, listing_ids: list) -> BulkResult:
+        results: list[BulkItemResult] = []
+        for lid in listing_ids:
+            try:
+                r = await self.db.execute(
+                    select(Listing).where(Listing.id == lid, Listing.seller_id == self.seller_id)
+                )
+                listing = r.scalar_one_or_none()
+                if not listing or listing.status != "pending_title_approval":
+                    results.append(BulkItemResult(listing_id=lid, success=False, error="estado inválido"))
+                    continue
+                await self.db.execute(
+                    sa_delete(ListingTitle).where(ListingTitle.listing_id == lid)
+                )
+                listing.selected_title = None
+                listing.status = "draft"
+                await self.db.commit()
+                results.append(BulkItemResult(listing_id=lid, success=True))
+            except Exception as e:
+                await self.db.rollback()
+                results.append(BulkItemResult(listing_id=lid, success=False, error=str(e)))
+        return self._bulk_result(results)
+
+    async def bulk_approve_images(self, listing_ids: list) -> BulkResult:
+        results: list[BulkItemResult] = []
+        for lid in listing_ids:
+            try:
+                r = await self.db.execute(
+                    select(Listing).where(Listing.id == lid, Listing.seller_id == self.seller_id)
+                )
+                listing = r.scalar_one_or_none()
+                if not listing or listing.status != "pending_image_approval":
+                    results.append(BulkItemResult(listing_id=lid, success=False, error="estado inválido"))
+                    continue
+                await self.db.execute(
+                    sa_update(ListingImage)
+                    .where(ListingImage.listing_id == lid)
+                    .values(approved=True)
+                    .execution_options(synchronize_session=False)
+                )
+                listing.status = "generating_description"
+                await self.db.commit()
+                from app.workers.tasks.ai_tasks import generate_description
+                generate_description.delay(str(lid))
+                results.append(BulkItemResult(listing_id=lid, success=True))
+            except Exception as e:
+                await self.db.rollback()
+                results.append(BulkItemResult(listing_id=lid, success=False, error=str(e)))
+        return self._bulk_result(results)
+
+    async def bulk_generate_images(self, listing_ids: list) -> BulkResult:
+        results: list[BulkItemResult] = []
+        for lid in listing_ids:
+            try:
+                r = await self.db.execute(
+                    sa_update(Listing)
+                    .where(
+                        Listing.id == lid,
+                        Listing.seller_id == self.seller_id,
+                        Listing.status == "pending_description",
+                    )
+                    .values(status="generating_images")
+                    .execution_options(synchronize_session=False)
+                )
+                await self.db.commit()
+                if r.rowcount == 0:
+                    results.append(BulkItemResult(listing_id=lid, success=False, error="estado inválido"))
+                    continue
+                from celery import chain as celery_chain
+                from app.workers.tasks.image_tasks import generate_images
+                from app.workers.tasks.ai_tasks import generate_description
+                from app.workers.tasks.publish_tasks import publish_listing
+                celery_chain(
+                    generate_images.si(str(lid)),
+                    generate_description.si(str(lid)),
+                    publish_listing.si(str(lid)),
+                ).delay()
+                results.append(BulkItemResult(listing_id=lid, success=True))
+            except Exception as e:
+                await self.db.rollback()
+                results.append(BulkItemResult(listing_id=lid, success=False, error=str(e)))
+        return self._bulk_result(results)
+
+    async def bulk_publish(self, listing_ids: list) -> BulkResult:
+        results: list[BulkItemResult] = []
+        for lid in listing_ids:
+            try:
+                r = await self.db.execute(
+                    sa_update(Listing)
+                    .where(
+                        Listing.id == lid,
+                        Listing.seller_id == self.seller_id,
+                        Listing.status == "ready_to_publish",
+                    )
+                    .values(status="publishing")
+                    .execution_options(synchronize_session=False)
+                )
+                await self.db.commit()
+                if r.rowcount == 0:
+                    results.append(BulkItemResult(listing_id=lid, success=False, error="estado inválido"))
+                    continue
+                from app.workers.tasks.publish_tasks import publish_listing
+                publish_listing.delay(str(lid))
+                results.append(BulkItemResult(listing_id=lid, success=True))
+            except Exception as e:
+                await self.db.rollback()
+                results.append(BulkItemResult(listing_id=lid, success=False, error=str(e)))
+        return self._bulk_result(results)
+
+    async def bulk_fill_attribute(
+        self,
+        listing_ids: list,
+        attribute_id: str,
+        value_name: str,
+        value_id: str | None,
+    ) -> BulkResult:
+        results: list[BulkItemResult] = []
+        for lid in listing_ids:
+            try:
+                r = await self.db.execute(
+                    select(Listing).where(
+                        Listing.id == lid,
+                        Listing.seller_id == self.seller_id,
+                        Listing.status.in_(["pending_seller_attributes", "pending_description"]),
+                    )
+                )
+                listing = r.scalar_one_or_none()
+                if not listing:
+                    results.append(BulkItemResult(listing_id=lid, success=False, error="estado inválido"))
+                    continue
+                attr_r = await self.db.execute(
+                    sa_update(ListingAttribute)
+                    .where(
+                        ListingAttribute.listing_id == lid,
+                        ListingAttribute.attribute_id == attribute_id,
+                    )
+                    .values(value_name=value_name, value_id=value_id)
+                    .execution_options(synchronize_session=False)
+                )
+                if attr_r.rowcount == 0:
+                    results.append(BulkItemResult(listing_id=lid, success=False, error="atributo não encontrado"))
+                    continue
+                # Advance status if all required attrs are now filled
+                unfilled_r = await self.db.execute(
+                    select(ListingAttribute).where(
+                        ListingAttribute.listing_id == lid,
+                        ListingAttribute.is_required == True,
+                        ListingAttribute.value_name.is_(None),
+                    )
+                )
+                if not unfilled_r.scalars().all() and listing.status == "pending_seller_attributes":
+                    listing.status = "pending_description"
+                await self.db.commit()
+                results.append(BulkItemResult(listing_id=lid, success=True))
+            except Exception as e:
+                await self.db.rollback()
+                results.append(BulkItemResult(listing_id=lid, success=False, error=str(e)))
+        return self._bulk_result(results)
