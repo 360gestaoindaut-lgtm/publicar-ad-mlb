@@ -4,6 +4,7 @@ import { useState, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { getListings } from "@/lib/api/listings"
 import { ApiError } from "@/lib/api/client"
+import { useSeller } from "@/contexts/SellerContext"
 import { ListingCard } from "./ListingCard"
 import { BulkActionsBar } from "./BulkActionsBar"
 import type { ListingStatus, ListingSummary } from "@/types/listing"
@@ -67,10 +68,13 @@ export function PipelineBoard() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeColumnId, setActiveColumnId] = useState<ColumnId | null>(null)
 
+  const { activeSeller, isLoading: isSellerLoading } = useSeller()
+
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["listings"],
+    queryKey: ["listings", activeSeller?.id],
     queryFn: () => getListings({ page_size: 200 }),
     refetchInterval: 8000,
+    enabled: !!activeSeller,
   })
 
   const handleSelect = useCallback((columnId: ColumnId, id: string, checked: boolean) => {
@@ -107,11 +111,22 @@ export function PipelineBoard() {
     setActiveColumnId(null)
   }, [])
 
-  if (isLoading) {
+  if (isSellerLoading || isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
         <span className="ml-2 text-slate-500">Carregando anúncios...</span>
+      </div>
+    )
+  }
+
+  if (!activeSeller) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3">
+        <p className="text-slate-600 text-sm text-center">Nenhuma conta conectada.</p>
+        <Link href="/settings" className="text-sm font-medium text-primary underline underline-offset-4 hover:opacity-80">
+          Ir para Configurações
+        </Link>
       </div>
     )
   }

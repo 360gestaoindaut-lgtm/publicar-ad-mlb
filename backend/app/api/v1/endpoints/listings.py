@@ -90,7 +90,7 @@ async def create_listing(
 async def list_listings(
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=200),
     active_seller=Depends(get_active_seller),
     db: AsyncSession = Depends(get_db),
 ):

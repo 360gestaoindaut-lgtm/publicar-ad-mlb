@@ -27,7 +27,13 @@ export function SellerProvider({ children }: { children: React.ReactNode }) {
 
       const savedId = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null
       const found = savedId ? data.find((s) => s.id === savedId) : null
-      setActiveSellerState(found ?? data[0] ?? null)
+      const active = found ?? data[0] ?? null
+      // Write to localStorage BEFORE setState so apiFetch already has X-Seller-ID
+      // when the re-render triggered by setActiveSellerState fires queries
+      if (active && typeof window !== "undefined") {
+        localStorage.setItem(STORAGE_KEY, active.id)
+      }
+      setActiveSellerState(active)
     } catch {
       // Se a chamada falhar (ex: sem token), não propaga — o layout já redireciona
     } finally {
