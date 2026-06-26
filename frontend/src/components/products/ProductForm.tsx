@@ -65,6 +65,14 @@ function empty(p?: Product): ProductFormData {
     width_cm: p.width_cm != null ? String(p.width_cm) as any : "",
     height_cm: p.height_cm != null ? String(p.height_cm) as any : "",
     acquisition_cost: p.acquisition_cost ?? "",
+    product_group: p.product_group ?? "",
+    technical_reference: p.technical_reference ?? "",
+    vehicle_application: p.vehicle_application ?? "",
+    color: p.color ?? "",
+    size: p.size ?? "",
+    capacity: p.capacity ?? "",
+    material: p.material ?? "",
+    gender: p.gender ?? "",
   }
 }
 
@@ -89,6 +97,14 @@ function toPayload(form: Record<string, string>): ProductFormData {
     width_cm: num(form.width_cm) as any,
     height_cm: num(form.height_cm) as any,
     acquisition_cost: dec(form.acquisition_cost) as any,
+    product_group: str(form.product_group),
+    technical_reference: str(form.technical_reference),
+    vehicle_application: str(form.vehicle_application),
+    color: str(form.color),
+    size: str(form.size),
+    capacity: str(form.capacity),
+    material: str(form.material),
+    gender: str(form.gender),
   }
 }
 
@@ -192,6 +208,35 @@ export function ProductForm({ initial, onSubmit }: Props) {
             <Field label="Custo de aquisição (R$)" name="acquisition_cost"
               value={form.acquisition_cost} onChange={handleChange} placeholder="ex: 1299,90" />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Título & SEO */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+            Título &amp; SEO
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="sm:col-span-2">
+            <Field label="Grupo de produto" name="product_group" value={form.product_group}
+              onChange={handleChange} placeholder="ex: rolamentos, pastilhas" />
+          </div>
+          <Field label="Referência técnica" name="technical_reference" value={form.technical_reference}
+            onChange={handleChange} placeholder="ex: 6203 DDU C3" />
+          <Field label="Aplicação / Veículo" name="vehicle_application" value={form.vehicle_application}
+            onChange={handleChange} placeholder="ex: Honda CG 125 / Yamaha YBR" />
+          <Field label="Cor" name="color" value={form.color}
+            onChange={handleChange} placeholder="ex: Preto" />
+          <Field label="Tamanho" name="size" value={form.size}
+            onChange={handleChange} placeholder="ex: M, 42, 500ml" />
+          <Field label="Capacidade" name="capacity" value={form.capacity}
+            onChange={handleChange} placeholder="ex: 128GB, 1L" />
+          <Field label="Material" name="material" value={form.material}
+            onChange={handleChange} placeholder="ex: Aço inox" />
+          <Field label="Gênero" name="gender" value={form.gender}
+            onChange={handleChange} placeholder="ex: Masculino, Feminino, Unissex" />
         </CardContent>
       </Card>
 

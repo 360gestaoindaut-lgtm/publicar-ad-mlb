@@ -15,6 +15,14 @@ export interface ProductFormData {
   width_cm?: number | null
   height_cm?: number | null
   acquisition_cost?: string | null
+  product_group?: string | null
+  technical_reference?: string | null
+  vehicle_application?: string | null
+  color?: string | null
+  size?: string | null
+  capacity?: string | null
+  material?: string | null
+  gender?: string | null
 }
 
 export interface Product {
@@ -36,6 +44,14 @@ export interface Product {
   width_cm: number | null
   height_cm: number | null
   acquisition_cost: string | null
+  product_group: string | null
+  technical_reference: string | null
+  vehicle_application: string | null
+  color: string | null
+  size: string | null
+  capacity: string | null
+  material: string | null
+  gender: string | null
   created_at: string
   updated_at: string
 }

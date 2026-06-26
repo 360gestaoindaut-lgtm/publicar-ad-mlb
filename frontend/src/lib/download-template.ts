@@ -55,7 +55,15 @@ export async function downloadProductTemplate() {
     { key: "comprimentocm", width: 15 },
     { key: "larguracm",     width: 13 },
     { key: "alturacm",      width: 11 },
-    { key: "custo",         width: 13 },
+    { key: "custo",           width: 13 },
+    { key: "grupo_produto",   width: 15 },
+    { key: "referencia_tecnica", width: 20 },
+    { key: "aplicacao_veiculo",  width: 25 },
+    { key: "cor",             width: 12 },
+    { key: "tamanho",         width: 10 },
+    { key: "capacidade",      width: 12 },
+    { key: "material",        width: 15 },
+    { key: "genero",          width: 12 },
   ]
 
   // Cabeçalho
@@ -63,6 +71,8 @@ export async function downloadProductTemplate() {
     "sku", "descricao", "marca", "modelo", "ean", "ncm",
     "origemfiscal", "icmscst", "icmsrate", "piscst", "cofinscst",
     "pesokg", "comprimentocm", "larguracm", "alturacm", "custo",
+    "grupo_produto", "referencia_tecnica", "aplicacao_veiculo",
+    "cor", "tamanho", "capacidade", "material", "genero",
   ])
   headerRow.eachCell((cell) => {
     cell.font = FONT_BOLD
@@ -75,6 +85,7 @@ export async function downloadProductTemplate() {
     "7892509082679", "8517120019",
     "0", "00", "12", "07", "07",
     "0,185", "16", "8", "1", "1299,90",
+    "", "", "", "", "", "", "", "",
   ])
   exampleRow.eachCell((cell) => { cell.font = FONT })
 
@@ -83,7 +94,7 @@ export async function downloadProductTemplate() {
   applyTextColumn(ws, 6, 1, 201)
 
   // Fonte padrão para células vazias das demais colunas
-  for (let c = 1; c <= 16; c++) {
+  for (let c = 1; c <= 24; c++) {
     if (c === 5 || c === 6) continue
     for (let r = 3; r <= 201; r++) {
       ws.getCell(r, c).font = FONT
