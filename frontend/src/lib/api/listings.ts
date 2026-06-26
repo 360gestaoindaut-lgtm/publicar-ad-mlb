@@ -167,5 +167,5 @@ export async function getListingsForGrid(): Promise<ListingAttributesRow[]> {
 }
 
 export async function activateListing(id: string): Promise<{ status: string }> {
-  return apiFetch(`/listings/${id}/activate`, { method: "POST" })
+  return apiFetch(`/api/v1/listings/${id}/activate`, { method: "POST" })
 }

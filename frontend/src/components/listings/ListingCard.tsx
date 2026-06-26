@@ -79,7 +79,6 @@ export function ListingCard({ listing, selected = false, onSelect }: ListingCard
                 e.stopPropagation()
                 try {
                   await activateListing(listing.id)
-                  window.location.reload()
                 } catch {
                   // polling de 8s mostrará o estado atual
                 }
