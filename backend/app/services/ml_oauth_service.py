@@ -4,9 +4,11 @@ from fastapi import HTTPException, status
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.config import get_settings
 from app.core.security import encrypt_value
 from app.models.seller import Seller
+from app.models.user import User
 from app.models.user_seller_access import UserSellerAccess
 
 settings = get_settings()
@@ -70,15 +72,17 @@ class MLOAuthService:
             db.add(seller)
             await db.flush()  # obtém o seller.id antes do commit
 
-        # Garante que o usuário tem acesso a este seller
-        existing_access = await db.execute(
-            select(UserSellerAccess).where(
-                UserSellerAccess.user_id == user_id,
-                UserSellerAccess.seller_id == seller.id,
-            )
+        # Concede acesso a todos os admins ativos (ON CONFLICT DO NOTHING evita duplicatas)
+        admin_ids_result = await db.execute(
+            select(User.id).where(User.role == "admin", User.is_active.is_(True))
         )
-        if not existing_access.scalar_one_or_none():
-            db.add(UserSellerAccess(user_id=user_id, seller_id=seller.id, role="admin"))
+        admin_ids = admin_ids_result.scalars().all()
+        if admin_ids:
+            await db.execute(
+                pg_insert(UserSellerAccess)
+                .values([{"user_id": uid, "seller_id": seller.id, "role": "admin"} for uid in admin_ids])
+                .on_conflict_do_nothing()
+            )
 
         await db.commit()
 
