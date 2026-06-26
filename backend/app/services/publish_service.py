@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.security import decrypt_value, encrypt_value
@@ -53,7 +54,7 @@ async def get_valid_access_token(seller, db) -> str:
 
 
 class PublishService:
-    def __init__(self, db=None) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
     async def activate_listing(self, listing, seller) -> None:

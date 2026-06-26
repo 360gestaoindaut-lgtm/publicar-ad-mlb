@@ -47,7 +47,7 @@ async def _publish_listing_async(listing_id: str) -> dict:
 
         access_token = await get_valid_access_token(seller, db)
 
-        mlb_id = await PublishService().publish(
+        mlb_id = await PublishService(db).publish(
             listing=listing,
             attributes=list(attributes),
             images=list(images),
