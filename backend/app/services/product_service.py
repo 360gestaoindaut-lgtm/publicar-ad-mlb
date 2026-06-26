@@ -73,7 +73,9 @@ class ProductService:
 
     async def update(self, sku: str, data: ProductUpdate) -> Product:
         product = await self.get_or_404(sku)
-        for key, value in data.model_dump(exclude_unset=False).items():
+        # exclude_unset=True → only update fields explicitly sent by the client;
+        # prevents wiping NOT NULL columns (e.g. description) on partial updates.
+        for key, value in data.model_dump(exclude_unset=True).items():
             setattr(product, key, value)
         await self.db.commit()
         await self.db.refresh(product)

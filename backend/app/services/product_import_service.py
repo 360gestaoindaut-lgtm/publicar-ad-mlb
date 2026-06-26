@@ -34,6 +34,15 @@ _COLUMN_MAP: dict[str, str] = {
     # Custo
     "custo": "custo", "custounif": "custo", "custounidade": "custo",
     "costprice": "custo", "precodecompra": "custo",
+    # Campos estruturados para geração de título (SPEC-013)
+    "grupo": "product_group", "grupoproduto": "product_group",
+    "referenciatecnica": "technical_reference",  # header "referencia_tecnica" normalizado
+    "aplicacao": "vehicle_application", "aplicacaoveiculo": "vehicle_application",
+    "cor": "color",
+    "tamanho": "size",
+    "capacidade": "capacity",
+    "material": "material",
+    "genero": "gender",
 }
 
 
@@ -159,6 +168,24 @@ def normalize_product_row(raw: dict) -> dict:
         out["height_cm"] = _to_int(raw["altura_cm"])
     if "custo" in raw:
         out["acquisition_cost"] = _to_decimal(raw["custo"])
+
+    # Campos estruturados para geração de título (SPEC-013)
+    if "product_group" in raw:
+        out["product_group"] = raw["product_group"] or None
+    if "technical_reference" in raw:
+        out["technical_reference"] = raw["technical_reference"] or None
+    if "vehicle_application" in raw:
+        out["vehicle_application"] = raw["vehicle_application"] or None
+    if "color" in raw:
+        out["color"] = raw["color"] or None
+    if "size" in raw:
+        out["size"] = raw["size"] or None
+    if "capacity" in raw:
+        out["capacity"] = raw["capacity"] or None
+    if "material" in raw:
+        out["material"] = raw["material"] or None
+    if "gender" in raw:
+        out["gender"] = raw["gender"] or None
 
     return out
 
