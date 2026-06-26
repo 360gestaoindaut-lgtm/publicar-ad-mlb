@@ -39,6 +39,18 @@ class Product(Base, TimestampMixin):
     # Custo
     acquisition_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
 
+    # Configuração de título e SEO
+    product_group: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # Campos estruturados para geração de título
+    technical_reference: Mapped[Optional[str]] = mapped_column(Text)
+    vehicle_application: Mapped[Optional[str]] = mapped_column(Text)
+    color: Mapped[Optional[str]] = mapped_column(String(100))
+    size: Mapped[Optional[str]] = mapped_column(String(50))
+    capacity: Mapped[Optional[str]] = mapped_column(String(50))
+    material: Mapped[Optional[str]] = mapped_column(String(100))
+    gender: Mapped[Optional[str]] = mapped_column(String(20))
+
     seller: Mapped["Seller"] = relationship("Seller", back_populates="products")
     listings: Mapped[list["Listing"]] = relationship("Listing", back_populates="product")
 
