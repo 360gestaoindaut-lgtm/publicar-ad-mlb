@@ -25,6 +25,7 @@ export interface ListingSummary {
   mlb_id: string | null
   created_at: string
   updated_at: string
+  failed_step?: string | null
 }
 
 export interface TitleOption {
@@ -116,3 +117,32 @@ export const WAITING_STATUSES: ListingStatus[] = [
   "pending_image_approval",
   "ready_to_publish",
 ]
+
+export interface BulkItemResult {
+  listing_id: string
+  success: boolean
+  error?: string | null
+}
+
+export interface BulkResult {
+  processed: number
+  failed: number
+  results: BulkItemResult[]
+}
+
+export interface AttributeItem {
+  attribute_id: string
+  attribute_name: string
+  value_name: string | null
+  value_id: string | null
+  is_required: boolean
+}
+
+export interface ListingAttributesRow {
+  listing_id: string
+  sku_external_id: string
+  selected_title: string | null
+  ml_category_id: string | null
+  status: string
+  attributes: AttributeItem[]
+}

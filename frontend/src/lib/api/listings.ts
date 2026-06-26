@@ -4,6 +4,8 @@ import type {
   ListingSummary,
   ListingsResponse,
   Condition,
+  BulkResult,
+  ListingAttributesRow,
 } from "@/types/listing"
 
 export interface CreateListingPayload {
@@ -104,4 +106,62 @@ export async function publishListing(id: string): Promise<ListingSummary> {
   return apiFetch<ListingSummary>(`/api/v1/listings/${id}/pipeline/publish`, {
     method: "POST",
   })
+}
+
+export async function bulkStartPipeline(listingIds: string[]): Promise<BulkResult> {
+  return apiFetch<BulkResult>("/api/v1/listings/bulk/start-pipeline", {
+    method: "POST",
+    body: JSON.stringify({ listing_ids: listingIds }),
+  })
+}
+
+export async function bulkApproveTitles(listingIds: string[]): Promise<BulkResult> {
+  return apiFetch<BulkResult>("/api/v1/listings/bulk/approve-titles", {
+    method: "POST",
+    body: JSON.stringify({ listing_ids: listingIds }),
+  })
+}
+
+export async function bulkRejectTitles(listingIds: string[]): Promise<BulkResult> {
+  return apiFetch<BulkResult>("/api/v1/listings/bulk/reject-titles", {
+    method: "POST",
+    body: JSON.stringify({ listing_ids: listingIds }),
+  })
+}
+
+export async function bulkApproveImages(listingIds: string[]): Promise<BulkResult> {
+  return apiFetch<BulkResult>("/api/v1/listings/bulk/approve-images", {
+    method: "POST",
+    body: JSON.stringify({ listing_ids: listingIds }),
+  })
+}
+
+export async function bulkGenerateImages(listingIds: string[]): Promise<BulkResult> {
+  return apiFetch<BulkResult>("/api/v1/listings/bulk/generate-images", {
+    method: "POST",
+    body: JSON.stringify({ listing_ids: listingIds }),
+  })
+}
+
+export async function bulkPublish(listingIds: string[]): Promise<BulkResult> {
+  return apiFetch<BulkResult>("/api/v1/listings/bulk/publish", {
+    method: "POST",
+    body: JSON.stringify({ listing_ids: listingIds }),
+  })
+}
+
+export async function bulkFillAttribute(payload: {
+  listing_ids: string[]
+  attribute_id: string
+  value_name: string
+  value_id?: string | null
+}): Promise<BulkResult> {
+  return apiFetch<BulkResult>("/api/v1/listings/bulk/attribute", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function getListingsForGrid(): Promise<ListingAttributesRow[]> {
+  return apiFetch<ListingAttributesRow[]>("/api/v1/listings/bulk/attributes")
 }
