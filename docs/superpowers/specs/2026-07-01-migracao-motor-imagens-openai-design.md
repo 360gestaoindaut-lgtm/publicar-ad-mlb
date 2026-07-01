@@ -80,8 +80,15 @@ na página `/listings/[id]` mostra um badge com o motor ativo no momento, ex.
 id                  UUID (PK)
 current_engine      String  — "openai" | "gemini" (default: "openai")
 last_openai_error   String, nullable — texto resumido do último erro de infra
+last_switch_to_openai_at  Timestamp, nullable — quando current_engine voltou
+                          para "openai" automaticamente (usado pelo frontend
+                          para decidir se deve disparar o toast)
 updated_at          Timestamp
 ```
+
+A linha única é criada por uma migration de dados (não por lógica de
+"cria se não existir" em runtime, para evitar condição de corrida entre
+workers concorrentes na primeira execução).
 
 ### Novo valor de status em `Listing.status`
 `pending_image_engine_confirmation` — sem migration necessária, pois
@@ -95,10 +102,13 @@ Executado no início da geração, após o guard de idempotência existente
 
 **Se `image_engine_state.current_engine == "gemini"`:**
 1. Faz uma checagem leve de conectividade com a API da OpenAI antes de gerar
-   (chamada rápida e barata, ex. listar modelos).
+   — uma chamada `GET` simples e barata (ex. `GET /v1/models`) só para saber
+   se a API responde, sem gerar imagem nessa checagem.
 2. Se responder OK → atualiza `current_engine = "openai"`, `last_openai_error
-   = null`, gera a imagem com OpenAI, e marca um flag para o frontend exibir
-   toast informativo (não bloqueante).
+   = null`, `last_switch_to_openai_at = now()`, e gera a imagem com OpenAI.
+   O frontend detecta a troca comparando o `last_switch_to_openai_at`
+   recebido no polling com o último valor visto (guardado em memória do
+   componente) e dispara o toast só quando o valor mudar.
 3. Se ainda falhar → segue gerando com Gemini normalmente, sem pedir nada
    (não houve transição de estado, já estava em Gemini).
 
@@ -120,17 +130,20 @@ Executado no início da geração, após o guard de idempotência existente
 Body: `{"action": "use_gemini" | "retry_openai"}`
 
 - **`use_gemini`**: define `image_engine_state.current_engine = "gemini"`;
-  reenfileira `generate_images` para este listing **e** para todos os outros
-  listings que estejam em `pending_image_engine_confirmation` no momento
-  (evita confirmação um a um quando vários anúncios travam pela mesma queda
-  da OpenAI).
-- **`retry_openai`**: reenfileira só este listing, tentando a OpenAI de novo,
-  sem alterar o estado global.
+  busca todos os listings com `status == "pending_image_engine_confirmation"`
+  (`SELECT ... WHERE status = 'pending_image_engine_confirmation'`, sem
+  filtro de seller — a troca de motor é global) e, para cada um, volta o
+  status para `generating_images` e reenfileira `generate_images` (mesmo
+  padrão de dispatch atômico via `UPDATE` já usado no resto do pipeline).
+- **`retry_openai`**: reenfileira só o listing do path da URL, voltando seu
+  status para `generating_images` e tentando a OpenAI de novo, sem alterar
+  `image_engine_state`.
 
 ## Frontend
 
 ### Endpoint de leitura
-`GET /api/v1/system/image-engine` → `{current_engine, pending_confirmation_count, last_openai_error}`
+`GET /api/v1/system/image-engine` →
+`{current_engine, pending_confirmation_count, last_openai_error, last_switch_to_openai_at}`
 
 ### Banner global
 Novo componente `ImageEngineBanner.tsx`, montado em
@@ -158,9 +171,8 @@ Novas entradas em `.env.example` / `Settings` (`backend/app/config.py`):
 - `OPENAI_IMAGE_MODEL` — default `gpt-image-1`
 
 Não é necessária uma variável `IMAGE_PROVIDER` estático — o motor ativo é
-dinâmico, controlado pela tabela `image_engine_state` (default inicial:
-`openai`, seedado via migration ou lógica de "cria se não existir" na
-primeira leitura).
+dinâmico, controlado pela tabela `image_engine_state`, cuja linha única
+(`current_engine = "openai"`) é seedada pela migration que cria a tabela.
 
 ## Testes
 
