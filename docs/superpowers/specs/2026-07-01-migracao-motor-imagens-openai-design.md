@@ -143,7 +143,13 @@ Body: `{"action": "use_gemini" | "retry_openai"}`
 
 ### Endpoint de leitura
 `GET /api/v1/system/image-engine` →
-`{current_engine, pending_confirmation_count, last_openai_error, last_switch_to_openai_at}`
+`{current_engine, engine_label, pending_confirmation_count, pending_listing_ids, last_openai_error, last_switch_to_openai_at}`
+
+`pending_listing_ids` (lista de IDs) é necessário além da contagem — o banner
+precisa de pelo menos um ID de anúncio pendente para poder chamar o endpoint
+de confirmação (que é por listing). `engine_label` é o rótulo pronto para UI
+(ex: `"OpenAI · gpt-image-1"`), computado no backend a partir do
+`OPENAI_IMAGE_MODEL` configurado.
 
 ### Banner global
 Novo componente `ImageEngineBanner.tsx`, montado em
