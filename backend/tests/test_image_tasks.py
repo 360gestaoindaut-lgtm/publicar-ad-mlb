@@ -4,7 +4,7 @@ import pytest
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.image_service import ImageRateLimitError
+from app.services.image_engines.base import ImageRateLimitError
 
 
 @asynccontextmanager
