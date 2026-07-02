@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { Sidebar } from "@/components/layout/Sidebar"
 import { SellerProvider } from "@/contexts/SellerContext"
+import { ImageEngineBanner } from "@/components/system/ImageEngineBanner"
 
 export default function DashboardLayout({
   children,
@@ -36,6 +37,7 @@ export default function DashboardLayout({
       <div className="flex h-screen overflow-hidden bg-background">
         <Sidebar />
         <main className="flex-1 min-w-0 overflow-y-auto p-6">
+          <ImageEngineBanner />
           <div key={pathname} className="animate-in fade-in duration-200">
             {children}
           </div>
