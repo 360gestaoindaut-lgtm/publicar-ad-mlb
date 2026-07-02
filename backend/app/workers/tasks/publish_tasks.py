@@ -19,6 +19,12 @@ async def _publish_listing_async(listing_id: str) -> dict:
             await db.execute(select(Listing).where(Listing.id == listing_id))
         ).scalar_one()
 
+        # Guard de idempotência: em uma chain, um step anterior pode ter pausado
+        # sem levantar exceção — nesse caso o status não avançou para 'publishing'
+        # e este step deve ser ignorado para não publicar um anúncio incompleto.
+        if listing.status != "publishing":
+            return {"listing_id": listing_id, "skipped": True}
+
         seller = (
             await db.execute(select(Seller).where(Seller.id == listing.seller_id))
         ).scalar_one()

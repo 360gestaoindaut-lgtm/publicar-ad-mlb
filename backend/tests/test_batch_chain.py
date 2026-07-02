@@ -215,6 +215,7 @@ class TestRemovedInternalDispatch:
 
         mock_listing = MagicMock()
         mock_listing.id = "lid"
+        mock_listing.status = "generating_description"
         mock_listing.created_via = "batch"
         mock_listing.selected_title = "Title"
         mock_listing.sku_brand = "Brand"

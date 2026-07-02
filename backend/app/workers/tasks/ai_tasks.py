@@ -84,6 +84,13 @@ async def _generate_description_async(listing_id: str) -> dict:
         result = await db.execute(select(Listing).where(Listing.id == listing_id))
         listing = result.scalar_one()
 
+        # Guard de idempotência: em uma chain, o step anterior pode ter pausado
+        # (ex: pending_image_engine_confirmation) sem levantar exceção — nesse
+        # caso o status não avançou para 'generating_description' e este step
+        # deve ser ignorado para não sobrescrever a pausa.
+        if listing.status != "generating_description":
+            return {"listing_id": listing_id, "skipped": True}
+
         attrs_result = await db.execute(
             select(ListingAttribute).where(ListingAttribute.listing_id == listing.id)
         )
