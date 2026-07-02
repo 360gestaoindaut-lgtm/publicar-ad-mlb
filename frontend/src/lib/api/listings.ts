@@ -92,6 +92,16 @@ export async function generateImages(id: string): Promise<ListingSummary> {
   )
 }
 
+export async function confirmImageEngine(
+  id: string,
+  action: "use_gemini" | "retry_openai"
+): Promise<ListingSummary> {
+  return apiFetch<ListingSummary>(
+    `/api/v1/listings/${id}/pipeline/confirm_image_engine`,
+    { method: "POST", body: JSON.stringify({ action }) }
+  )
+}
+
 export async function approveImages(
   id: string,
   approved_ids: string[]
