@@ -35,7 +35,7 @@ class OpenAIImageEngine(ImageEngineProvider):
             raise ImageEngineUnavailableError(f"Timeout ao chamar a OpenAI: {exc}") from exc
 
         if not resp.is_success:
-            if resp.status_code == 429 or resp.status_code >= 500:
+            if resp.status_code in (401, 403, 429) or resp.status_code >= 500:
                 raise ImageEngineUnavailableError(
                     f"OpenAI API {resp.status_code}: {resp.text[:600]}"
                 )

@@ -57,6 +57,39 @@ class TestOpenAIImageEngineGenerate:
                 await engine.generate("prompt")
 
     @pytest.mark.asyncio
+    async def test_401_raises_unavailable_error(self):
+        """Missing/invalid OPENAI_API_KEY must trigger the same failover-
+        confirmation flow as infra outages, not a hard, un-recoverable
+        failure with no self-service way to fall back to Gemini."""
+        mock_response = MagicMock()
+        mock_response.is_success = False
+        mock_response.status_code = 401
+        mock_response.text = "Invalid API key"
+        mock_response.request = MagicMock()
+
+        mock_post = AsyncMock(return_value=mock_response)
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.__aenter__.return_value.post = mock_post
+            engine = OpenAIImageEngine()
+            with pytest.raises(ImageEngineUnavailableError):
+                await engine.generate("prompt")
+
+    @pytest.mark.asyncio
+    async def test_403_raises_unavailable_error(self):
+        mock_response = MagicMock()
+        mock_response.is_success = False
+        mock_response.status_code = 403
+        mock_response.text = "Forbidden"
+        mock_response.request = MagicMock()
+
+        mock_post = AsyncMock(return_value=mock_response)
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.__aenter__.return_value.post = mock_post
+            engine = OpenAIImageEngine()
+            with pytest.raises(ImageEngineUnavailableError):
+                await engine.generate("prompt")
+
+    @pytest.mark.asyncio
     async def test_timeout_raises_unavailable_error(self):
         mock_post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
         with patch("httpx.AsyncClient") as mock_client_cls:
