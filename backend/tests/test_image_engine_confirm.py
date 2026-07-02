@@ -10,10 +10,12 @@ class TestConfirmImageEngine:
         triggering_listing = MagicMock()
         triggering_listing.id = "lid-1"
         triggering_listing.status = "pending_image_engine_confirmation"
+        triggering_listing.created_via = "manual"
 
         other_pending = MagicMock()
         other_pending.id = "lid-2"
         other_pending.status = "pending_image_engine_confirmation"
+        other_pending.created_via = "manual"
 
         mock_engine_state = MagicMock()
         mock_engine_state.current_engine = "openai"
@@ -72,6 +74,7 @@ class TestConfirmImageEngine:
         listing = MagicMock()
         listing.id = "lid-1"
         listing.status = "pending_image_engine_confirmation"
+        listing.created_via = "manual"
 
         mock_db = AsyncMock()
         mock_db.commit = AsyncMock()
@@ -110,3 +113,106 @@ class TestConfirmImageEngine:
         with pytest.raises(HTTPException) as exc_info:
             await svc.confirm_image_engine(listing, "not_a_real_action")
         assert exc_info.value.status_code == 422
+
+
+class TestConfirmImageEngineBatchAwareRedispatch:
+    """Batch listings need the full chain re-dispatched on retry/resume, or
+    the pipeline dead-ends in 'generating_description' forever (no chain
+    left to enqueue generate_description/publish_listing). Manual listings
+    keep the bare .delay() since their pipeline pauses at each step anyway.
+    """
+
+    @pytest.mark.asyncio
+    async def test_use_gemini_mixed_batch_and_manual_dispatch_correctly(self):
+        from app.services.listing_service import ListingService
+
+        batch_listing = MagicMock()
+        batch_listing.id = "lid-batch"
+        batch_listing.status = "pending_image_engine_confirmation"
+        batch_listing.created_via = "batch"
+
+        manual_listing = MagicMock()
+        manual_listing.id = "lid-manual"
+        manual_listing.status = "pending_image_engine_confirmation"
+        manual_listing.created_via = "manual"
+
+        mock_engine_state = MagicMock()
+        mock_engine_state.current_engine = "openai"
+
+        mock_db = AsyncMock()
+        execute_calls = [0]
+
+        async def execute_side(stmt):
+            execute_calls[0] += 1
+            r = MagicMock()
+            if execute_calls[0] == 1:      # SELECT ImageEngineState
+                r.scalar_one = MagicMock(return_value=mock_engine_state)
+            else:                          # SELECT Listing WHERE status = pending_...
+                r.scalars = MagicMock(return_value=MagicMock(
+                    all=MagicMock(return_value=[batch_listing, manual_listing])
+                ))
+            return r
+
+        mock_db.execute = execute_side
+        mock_db.commit = AsyncMock()
+
+        mock_chain_instance = MagicMock()
+
+        with patch("app.workers.tasks.image_tasks.generate_images") as mock_gi, \
+             patch("app.workers.tasks.ai_tasks.generate_description") as mock_gd, \
+             patch("app.workers.tasks.publish_tasks.publish_listing") as mock_pl, \
+             patch("celery.chain", return_value=mock_chain_instance) as mock_chain_fn:
+            svc = ListingService(mock_db)
+            await svc.confirm_image_engine(batch_listing, "use_gemini")
+
+        assert mock_engine_state.current_engine == "gemini"
+        assert batch_listing.status == "generating_images"
+        assert manual_listing.status == "generating_images"
+
+        # Batch listing: full chain re-dispatched.
+        mock_gi.si.assert_called_once_with("lid-batch")
+        mock_gd.si.assert_called_once_with("lid-batch")
+        mock_pl.si.assert_called_once_with("lid-batch")
+        mock_chain_fn.assert_called_once_with(
+            mock_gi.si.return_value, mock_gd.si.return_value, mock_pl.si.return_value
+        )
+        mock_chain_instance.delay.assert_called_once()
+
+        # Manual listing: bare .delay(), no chain/si involvement (only 1 total
+        # .si() call for generate_description/publish_listing — from the batch
+        # listing above; the manual listing never touches them at all).
+        mock_gi.delay.assert_called_once_with("lid-manual")
+        mock_gd.si.assert_called_once()
+        mock_gd.delay.assert_not_called()
+        mock_pl.delay.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_retry_openai_batch_listing_dispatches_chain(self):
+        from app.services.listing_service import ListingService
+
+        listing = MagicMock()
+        listing.id = "lid-1"
+        listing.status = "pending_image_engine_confirmation"
+        listing.created_via = "batch"
+
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+
+        mock_chain_instance = MagicMock()
+
+        with patch("app.workers.tasks.image_tasks.generate_images") as mock_gi, \
+             patch("app.workers.tasks.ai_tasks.generate_description") as mock_gd, \
+             patch("app.workers.tasks.publish_tasks.publish_listing") as mock_pl, \
+             patch("celery.chain", return_value=mock_chain_instance) as mock_chain_fn:
+            svc = ListingService(mock_db)
+            await svc.confirm_image_engine(listing, "retry_openai")
+
+        assert listing.status == "generating_images"
+        mock_gi.si.assert_called_once_with("lid-1")
+        mock_gd.si.assert_called_once_with("lid-1")
+        mock_pl.si.assert_called_once_with("lid-1")
+        mock_chain_fn.assert_called_once_with(
+            mock_gi.si.return_value, mock_gd.si.return_value, mock_pl.si.return_value
+        )
+        mock_chain_instance.delay.assert_called_once()
+        mock_gi.delay.assert_not_called()

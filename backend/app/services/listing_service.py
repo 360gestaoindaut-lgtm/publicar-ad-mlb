@@ -225,6 +225,24 @@ class ListingService:
 
         from app.workers.tasks.image_tasks import generate_images
 
+        def _redispatch(listing_obj: Listing) -> None:
+            # Anúncios batch precisam da chain completa (imagens → descrição →
+            # publicação) para que o pipeline continue automaticamente após o
+            # retry, igual ao dispatch original. Anúncios manuais pausam em
+            # cada etapa por design, então um .delay() avulso basta.
+            if listing_obj.created_via == "batch":
+                from celery import chain as celery_chain
+                from app.workers.tasks.image_tasks import generate_images as gi
+                from app.workers.tasks.ai_tasks import generate_description
+                from app.workers.tasks.publish_tasks import publish_listing
+                celery_chain(
+                    gi.si(str(listing_obj.id)),
+                    generate_description.si(str(listing_obj.id)),
+                    publish_listing.si(str(listing_obj.id)),
+                ).delay()
+            else:
+                generate_images.delay(str(listing_obj.id))
+
         if action == "use_gemini":
             from app.models.image_engine_state import ImageEngineState
             engine_state = (await self.db.execute(select(ImageEngineState))).scalar_one()
@@ -238,12 +256,12 @@ class ListingService:
                 pending_listing.error_message = None
             await self.db.commit()
             for pending_listing in pending:
-                generate_images.delay(str(pending_listing.id))
+                _redispatch(pending_listing)
         else:
             listing.status = "generating_images"
             listing.error_message = None
             await self.db.commit()
-            generate_images.delay(str(listing.id))
+            _redispatch(listing)
 
     async def approve_images(self, listing: Listing, approved_ids: list[UUID]) -> None:
         if listing.status != "pending_image_approval":
