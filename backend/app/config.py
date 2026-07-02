@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     claude_model: str = "claude-haiku-4-5-20251001"
 
+    # OpenAI (motor de imagem alternativo — gpt-image-1)
+    openai_api_key: str = ""
+    openai_image_model: str = "gpt-image-1"
+
     # Cloudflare R2
     r2_account_id: str = ""
     r2_access_key_id: str = ""
