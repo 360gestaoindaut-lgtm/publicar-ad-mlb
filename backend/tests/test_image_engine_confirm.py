@@ -35,7 +35,16 @@ class TestConfirmImageEngine:
         mock_db.execute = execute_side
         mock_db.commit = AsyncMock()
 
+        # Parent tracker to verify temporal ordering between db.commit() and
+        # generate_images.delay(): the production code must commit the
+        # status change BEFORE dispatching any Celery task (never interleave
+        # mutate-status/dispatch inside the same loop).
+        call_order = MagicMock()
+
         with patch("app.workers.tasks.image_tasks.generate_images") as mock_task:
+            call_order.attach_mock(mock_db.commit, "commit")
+            call_order.attach_mock(mock_task.delay, "delay")
+
             svc = ListingService(mock_db)
             await svc.confirm_image_engine(triggering_listing, "use_gemini")
 
@@ -45,6 +54,16 @@ class TestConfirmImageEngine:
         assert mock_task.delay.call_count == 2
         mock_task.delay.assert_any_call("lid-1")
         mock_task.delay.assert_any_call("lid-2")
+
+        call_names = [c[0] for c in call_order.mock_calls]
+        commit_indices = [i for i, name in enumerate(call_names) if name == "commit"]
+        delay_indices = [i for i, name in enumerate(call_names) if name == "delay"]
+        assert commit_indices, "db.commit() was never called"
+        assert delay_indices, "generate_images.delay() was never called"
+        assert max(commit_indices) < min(delay_indices), (
+            "generate_images.delay() must not be called before db.commit() "
+            f"(call order: {call_names})"
+        )
 
     @pytest.mark.asyncio
     async def test_retry_openai_only_reenqueues_this_listing(self):
