@@ -189,12 +189,12 @@ class TestGenerateImagesIdempotency:
         mock_result.scalar_one.return_value = mock_listing
         mock_db.execute = AsyncMock(return_value=mock_result)
 
-        with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
-             patch("app.services.image_service.GeminiImageService") as mock_gemini:
+        with patch("app.database.worker_session", lambda: _mock_session(mock_db)):
             result = await _generate_images_async("listing-id")
 
         assert result == {"listing_id": "listing-id", "skipped": True}
-        mock_gemini.assert_not_called()
+        # Guard aborta antes de qualquer engine ser resolvido; apenas 1 execute (SELECT Listing).
+        assert mock_db.execute.await_count == 1
 
     @pytest.mark.asyncio
     async def test_proceeds_when_status_is_generating_images(self):
@@ -207,23 +207,181 @@ class TestGenerateImagesIdempotency:
         mock_listing.seller_id = "sid"
         mock_listing.created_via = "manual"
 
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalar_one.return_value = mock_listing
-        mock_db.execute = AsyncMock(return_value=mock_result)
+        mock_engine_state = MagicMock()
+        mock_engine_state.current_engine = "openai"
 
-        # Com status correto, a função avança — mas vai falhar em algum ponto
-        # sem o restante dos mocks. Basta confirmar que GeminiImageService foi instanciado.
+        mock_db = AsyncMock()
+        execute_calls = [0]
+
+        async def execute_side(stmt):
+            execute_calls[0] += 1
+            r = MagicMock()
+            if execute_calls[0] == 1:      # SELECT Listing
+                r.scalar_one = MagicMock(return_value=mock_listing)
+            elif execute_calls[0] == 2:    # SELECT Seller
+                r.scalar_one = MagicMock(return_value=MagicMock())
+            else:                          # SELECT ImageEngineState
+                r.scalar_one = MagicMock(return_value=mock_engine_state)
+            return r
+
+        mock_db.execute = execute_side
+        mock_db.commit = AsyncMock()
+
         with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
+             patch("app.workers.tasks.image_tasks._fetch_upload_token", new_callable=AsyncMock, return_value="tok"), \
              patch("app.services.ai.service.get_ai_provider", return_value=AsyncMock(
                  generate_image_prompt=AsyncMock(return_value="prompt")
              )), \
-             patch("app.services.image_service.GeminiImageService") as mock_gemini_cls, \
-             patch("app.workers.tasks.image_tasks._fetch_upload_token", new_callable=AsyncMock, return_value="tok"):
-            mock_gemini_cls.return_value.generate = AsyncMock(return_value=[])
+             patch("app.services.image_engines.openai_engine.OpenAIImageEngine") as mock_openai_cls:
+            mock_openai_cls.return_value.generate = AsyncMock(return_value=[])
             try:
                 await _generate_images_async("listing-id")
             except Exception:
                 pass  # pode falhar após o guard — o que importa é que chegou aqui
 
-        mock_gemini_cls.assert_called_once()
+        mock_openai_cls.assert_called_once()
+
+
+class TestImageEngineDecisionFlow:
+    @pytest.mark.asyncio
+    async def test_openai_infra_failure_sets_pending_confirmation(self):
+        from app.workers.tasks.image_tasks import _generate_images_async
+        from app.services.image_engines.base import ImageEngineUnavailableError
+
+        mock_listing = MagicMock()
+        mock_listing.id = "lid"
+        mock_listing.status = "generating_images"
+        mock_listing.sku_external_id = None
+        mock_listing.seller_id = "sid"
+        mock_listing.created_via = "manual"
+
+        mock_engine_state = MagicMock()
+        mock_engine_state.current_engine = "openai"
+
+        mock_db = AsyncMock()
+        execute_calls = [0]
+
+        async def execute_side(stmt):
+            execute_calls[0] += 1
+            r = MagicMock()
+            if execute_calls[0] == 1:
+                r.scalar_one = MagicMock(return_value=mock_listing)
+            elif execute_calls[0] == 2:
+                r.scalar_one = MagicMock(return_value=MagicMock())
+            else:
+                r.scalar_one = MagicMock(return_value=mock_engine_state)
+            return r
+
+        mock_db.execute = execute_side
+        mock_db.commit = AsyncMock()
+
+        with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
+             patch("app.workers.tasks.image_tasks._fetch_upload_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("app.services.ai.service.get_ai_provider", return_value=AsyncMock(
+                 generate_image_prompt=AsyncMock(return_value="prompt")
+             )), \
+             patch("app.services.image_engines.openai_engine.OpenAIImageEngine") as mock_openai_cls:
+            mock_openai_cls.return_value.generate = AsyncMock(
+                side_effect=ImageEngineUnavailableError("timeout")
+            )
+            result = await _generate_images_async("lid")
+
+        assert result == {"listing_id": "lid", "pending_image_engine_confirmation": True}
+        assert mock_listing.status == "pending_image_engine_confirmation"
+        assert mock_engine_state.last_openai_error == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_gemini_auto_switches_back_when_openai_healthy(self):
+        from app.workers.tasks.image_tasks import _generate_images_async
+
+        mock_listing = MagicMock()
+        mock_listing.id = "lid"
+        mock_listing.status = "generating_images"
+        mock_listing.sku_external_id = None
+        mock_listing.seller_id = "sid"
+        mock_listing.created_via = "manual"
+
+        mock_engine_state = MagicMock()
+        mock_engine_state.current_engine = "gemini"
+
+        mock_db = AsyncMock()
+        execute_calls = [0]
+
+        async def execute_side(stmt):
+            execute_calls[0] += 1
+            r = MagicMock()
+            if execute_calls[0] == 1:
+                r.scalar_one = MagicMock(return_value=mock_listing)
+            elif execute_calls[0] == 2:
+                r.scalar_one = MagicMock(return_value=MagicMock())
+            else:
+                r.scalar_one = MagicMock(return_value=mock_engine_state)
+            return r
+
+        mock_db.execute = execute_side
+        mock_db.commit = AsyncMock()
+
+        with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
+             patch("app.workers.tasks.image_tasks._fetch_upload_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("app.services.ai.service.get_ai_provider", return_value=AsyncMock(
+                 generate_image_prompt=AsyncMock(return_value="prompt")
+             )), \
+             patch("app.services.image_engines.openai_engine.check_openai_health", new_callable=AsyncMock, return_value=True), \
+             patch("app.services.image_engines.openai_engine.OpenAIImageEngine") as mock_openai_cls:
+            mock_openai_cls.return_value.generate = AsyncMock(return_value=[])
+            try:
+                await _generate_images_async("lid")
+            except RuntimeError:
+                pass  # "Nenhuma imagem válida" — irrelevante para este teste
+
+        assert mock_engine_state.current_engine == "openai"
+        assert mock_engine_state.last_openai_error is None
+        assert mock_engine_state.last_switch_to_openai_at is not None
+        mock_openai_cls.return_value.generate.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_gemini_stays_when_openai_still_unhealthy(self):
+        from app.workers.tasks.image_tasks import _generate_images_async
+
+        mock_listing = MagicMock()
+        mock_listing.id = "lid"
+        mock_listing.status = "generating_images"
+        mock_listing.sku_external_id = None
+        mock_listing.seller_id = "sid"
+        mock_listing.created_via = "manual"
+
+        mock_engine_state = MagicMock()
+        mock_engine_state.current_engine = "gemini"
+
+        mock_db = AsyncMock()
+        execute_calls = [0]
+
+        async def execute_side(stmt):
+            execute_calls[0] += 1
+            r = MagicMock()
+            if execute_calls[0] == 1:
+                r.scalar_one = MagicMock(return_value=mock_listing)
+            elif execute_calls[0] == 2:
+                r.scalar_one = MagicMock(return_value=MagicMock())
+            else:
+                r.scalar_one = MagicMock(return_value=mock_engine_state)
+            return r
+
+        mock_db.execute = execute_side
+        mock_db.commit = AsyncMock()
+
+        with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
+             patch("app.workers.tasks.image_tasks._fetch_upload_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("app.services.ai.service.get_ai_provider", return_value=AsyncMock(
+                 generate_image_prompt=AsyncMock(return_value="prompt")
+             )), \
+             patch("app.services.image_engines.openai_engine.check_openai_health", new_callable=AsyncMock, return_value=False), \
+             patch("app.services.image_engines.gemini_engine.GeminiImageEngine") as mock_gemini_cls:
+            mock_gemini_cls.return_value.generate = AsyncMock(return_value=[])
+            try:
+                await _generate_images_async("lid")
+            except RuntimeError:
+                pass
+
+        assert mock_engine_state.current_engine == "gemini"
+        mock_gemini_cls.return_value.generate.assert_called_once()

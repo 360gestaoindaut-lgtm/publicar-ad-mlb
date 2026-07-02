@@ -17,7 +17,7 @@ async def _generate_images_async(listing_id: str) -> dict:
     from app.models.product_image import ProductImage
     from app.models.seller import Seller
     from app.services.ai.service import get_ai_provider
-    from app.services.image_service import GeminiImageService, MLPictureService, validate_image, ensure_dimensions
+    from app.services.image_service import MLPictureService, validate_image, ensure_dimensions
 
     async with worker_session() as db:
         listing = (
@@ -62,10 +62,23 @@ async def _generate_images_async(listing_id: str) -> dict:
                 return {"listing_id": listing_id, "images_reused": len(existing)}
 
         # Sem imagens existentes — gera com IA
+        from datetime import datetime, timezone
+        from app.services.image_engines.base import ImageEngineUnavailableError
+        from app.services.image_engines.openai_engine import check_openai_health
+        from app.services.image_engines.service import get_engine_instance, get_engine_state
+
         seller = (
             await db.execute(select(Seller).where(Seller.id == listing.seller_id))
         ).scalar_one()
         access_token = await _fetch_upload_token(seller, db)
+
+        engine_state = await get_engine_state(db)
+
+        if engine_state.current_engine == "gemini" and await check_openai_health():
+            engine_state.current_engine = "openai"
+            engine_state.last_openai_error = None
+            engine_state.last_switch_to_openai_at = datetime.now(timezone.utc)
+            await db.commit()
 
         ai = get_ai_provider()
         prompt = await ai.generate_image_prompt(
@@ -74,7 +87,20 @@ async def _generate_images_async(listing_id: str) -> dict:
             description=listing.sku_description,
         )
 
-        raw_images = await GeminiImageService().generate(prompt)
+        engine = get_engine_instance(engine_state.current_engine)
+        source_label = engine_state.current_engine
+
+        try:
+            raw_images = await engine.generate(prompt)
+        except ImageEngineUnavailableError as exc:
+            engine_state.last_openai_error = str(exc)[:500]
+            await db.commit()
+            listing.failed_step = listing.status
+            listing.status = "pending_image_engine_confirmation"
+            listing.error_message = str(exc)[:500]
+            await db.commit()
+            return {"listing_id": listing_id, "pending_image_engine_confirmation": True}
+
         ml_pic = MLPictureService()
         saved = 0
 
@@ -100,14 +126,14 @@ async def _generate_images_async(listing_id: str) -> dict:
                     seller_id=listing.seller_id,
                     sku=sku,
                     ml_picture_id=ml_picture_id,
-                    source="gemini",
+                    source=source_label,
                     is_approved=False,
                 ))
 
             saved += 1
 
         if saved == 0:
-            raise RuntimeError("Nenhuma imagem válida foi gerada pelo Gemini Imagen")
+            raise RuntimeError(f"Nenhuma imagem válida foi gerada pelo motor '{source_label}'")
 
         if listing.created_via == "batch":
             # Auto-aprovar todas as imagens geradas e suas entradas no índice SKU→imagem
@@ -164,7 +190,7 @@ def generate_images(self, listing_id: str) -> dict:
     try:
         return asyncio.run(_generate_images_async(listing_id))
     except Exception as exc:
-        from app.services.image_service import ImageRateLimitError
+        from app.services.image_engines.base import ImageRateLimitError
         countdown = (
             60 * (2 ** self.request.retries)   # 60s, 120s — muito mais longo para 429
             if isinstance(exc, ImageRateLimitError)
