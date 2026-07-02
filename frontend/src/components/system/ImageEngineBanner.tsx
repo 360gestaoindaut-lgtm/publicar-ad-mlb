@@ -9,7 +9,7 @@ import { getImageEngineState } from "@/lib/api/system"
 import { confirmImageEngine } from "@/lib/api/listings"
 
 export function ImageEngineBanner() {
-  const lastSwitchSeen = useRef<string | null>(null)
+  const lastSwitchSeen = useRef<string | null | undefined>(undefined)
   const queryClient = useQueryClient()
 
   const { data } = useQuery({
@@ -35,7 +35,7 @@ export function ImageEngineBanner() {
 
   if (data) {
     const seen = lastSwitchSeen.current
-    if (data.last_switch_to_openai_at && seen !== null && seen !== data.last_switch_to_openai_at) {
+    if (data.last_switch_to_openai_at && seen !== undefined && seen !== data.last_switch_to_openai_at) {
       toast.success("Geração de imagens voltou a usar a OpenAI")
     }
     lastSwitchSeen.current = data.last_switch_to_openai_at
