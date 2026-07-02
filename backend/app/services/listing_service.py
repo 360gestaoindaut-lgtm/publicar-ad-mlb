@@ -211,6 +211,40 @@ class ListingService:
         from app.workers.tasks.image_tasks import generate_images
         generate_images.delay(str(listing.id))
 
+    async def confirm_image_engine(self, listing: Listing, action: str) -> None:
+        if listing.status != "pending_image_engine_confirmation":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Confirmação de motor de imagem indisponível no status '{listing.status}'",
+            )
+        if action not in ("use_gemini", "retry_openai"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="action deve ser 'use_gemini' ou 'retry_openai'",
+            )
+
+        from app.workers.tasks.image_tasks import generate_images
+
+        if action == "use_gemini":
+            from app.models.image_engine_state import ImageEngineState
+            engine_state = (await self.db.execute(select(ImageEngineState))).scalar_one()
+            engine_state.current_engine = "gemini"
+
+            pending = (await self.db.execute(
+                select(Listing).where(Listing.status == "pending_image_engine_confirmation")
+            )).scalars().all()
+            for pending_listing in pending:
+                pending_listing.status = "generating_images"
+                pending_listing.error_message = None
+            await self.db.commit()
+            for pending_listing in pending:
+                generate_images.delay(str(pending_listing.id))
+        else:
+            listing.status = "generating_images"
+            listing.error_message = None
+            await self.db.commit()
+            generate_images.delay(str(listing.id))
+
     async def approve_images(self, listing: Listing, approved_ids: list[UUID]) -> None:
         if listing.status != "pending_image_approval":
             raise HTTPException(

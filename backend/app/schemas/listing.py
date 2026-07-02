@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel, field_validator
@@ -116,6 +116,10 @@ class ImageOut(BaseModel):
 
 class ImageApproveRequest(BaseModel):
     approved_ids: list[UUID]
+
+
+class ImageEngineConfirmRequest(BaseModel):
+    action: Literal["use_gemini", "retry_openai"]
 
 
 class ListingDetail(ListingSummary):

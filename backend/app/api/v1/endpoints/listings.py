@@ -13,6 +13,7 @@ from app.models.listing_job import ListingJob
 from app.models.listing_image import ListingImage
 from app.schemas.listing import (
     ImageApproveRequest,
+    ImageEngineConfirmRequest,
     ImageOut,
     ListingCreate,
     ListingDetail,
@@ -177,6 +178,19 @@ async def generate_images(
     svc = ListingService(db)
     listing = await svc.get_or_404(listing_id, active_seller.id)
     await svc.trigger_image_generation(listing)
+    return ListingSummary.model_validate(listing)
+
+
+@router.post("/{listing_id}/pipeline/confirm_image_engine", response_model=ListingSummary)
+async def confirm_image_engine(
+    listing_id: UUID,
+    body: ImageEngineConfirmRequest,
+    active_seller=Depends(get_active_seller),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = ListingService(db)
+    listing = await svc.get_or_404(listing_id, active_seller.id)
+    await svc.confirm_image_engine(listing, body.action)
     return ListingSummary.model_validate(listing)
 
 
