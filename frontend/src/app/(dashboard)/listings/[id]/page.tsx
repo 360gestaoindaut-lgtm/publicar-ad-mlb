@@ -1,11 +1,13 @@
 "use client"
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { getListing, retryPipeline, deleteListing, generateImages } from "@/lib/api/listings"
+import { getListing, retryPipeline, deleteListing, generateImages, confirmImageEngine } from "@/lib/api/listings"
+import { getImageEngineState } from "@/lib/api/system"
 import { formatPrice, formatQuantity } from "@/lib/utils"
 import { useRouter, useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { ListingStatusBadge } from "@/components/listings/ListingStatusBadge"
 import { toast } from "sonner"
 import {
@@ -57,6 +59,25 @@ export default function ListingDetailPage() {
     },
     enabled: !!listing?.ml_category_id,
     staleTime: Infinity,
+  })
+
+  const { data: engineState } = useQuery({
+    queryKey: ["image-engine-state"],
+    queryFn: getImageEngineState,
+    refetchInterval: 8_000,
+  })
+
+  const confirmEngineMutation = useMutation({
+    mutationFn: (action: "use_gemini" | "retry_openai") => confirmImageEngine(id, action),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["listing", id] })
+      queryClient.invalidateQueries({ queryKey: ["listings"] })
+      queryClient.invalidateQueries({ queryKey: ["image-engine-state"] })
+      toast.success("Motor de imagem atualizado")
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Erro ao confirmar motor de imagem")
+    },
   })
 
   const retryMutation = useMutation({
@@ -227,8 +248,9 @@ export default function ListingDetailPage() {
 
       {status === "pending_description" && (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-base">Gerar imagens do produto</CardTitle>
+            {engineState && <Badge variant="outline">{engineState.engine_label}</Badge>}
           </CardHeader>
           <CardContent>
             <p className="text-sm text-slate-600 mb-4">
@@ -254,8 +276,9 @@ export default function ListingDetailPage() {
 
       {status === "pending_image_approval" && (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-base">Imagens geradas</CardTitle>
+            {engineState && <Badge variant="outline">{engineState.engine_label}</Badge>}
           </CardHeader>
           <CardContent>
             <p className="text-sm text-slate-600 mb-4">
@@ -265,6 +288,47 @@ export default function ListingDetailPage() {
             <Button asChild className="w-full">
               <Link href={`/listings/${id}/images`}>Aprovar imagens</Link>
             </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {status === "pending_image_engine_confirmation" && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardHeader>
+            <CardTitle className="text-base text-amber-900 flex items-center gap-2">
+              <AlertCircle className="w-5 h-5" />
+              Confirmação necessária: motor de imagem
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {listing.error_message && (
+              <p className="text-sm text-amber-800 mb-4 p-3 bg-amber-100 rounded-md font-mono">
+                {listing.error_message}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                disabled={confirmEngineMutation.isPending}
+                onClick={() => confirmEngineMutation.mutate("retry_openai")}
+              >
+                {confirmEngineMutation.isPending && confirmEngineMutation.variables === "retry_openai" ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : null}
+                Tentar novamente com OpenAI
+              </Button>
+              <Button
+                className="flex-1"
+                disabled={confirmEngineMutation.isPending}
+                onClick={() => confirmEngineMutation.mutate("use_gemini")}
+              >
+                {confirmEngineMutation.isPending && confirmEngineMutation.variables === "use_gemini" ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : null}
+                Usar Gemini neste anúncio
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
