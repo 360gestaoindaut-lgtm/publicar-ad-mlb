@@ -64,15 +64,17 @@ lógica de geração abaixo já itera sobre essa lista — pronta para quando um
 projeto de kit fizer essa função retornar múltiplos SKUs.
 
 ### RF4 — Geração por SKU (imagens individuais)
-Para cada SKU resolvido, com as 2 fotos brutas baixadas:
+Para cada SKU resolvido, com as 2 fotos brutas baixadas: **uma chamada de
+edição por foto bruta** (não uma chamada combinando as duas) — decisão fixada
+ao resolver o requisito de mínimo de 4 fotos (RF6):
 ```
-edit(images=[raw1, raw2], prompt=<tratamento>, n=2,
-     input_fidelity="high", quality="medium")
+edit(images=[raw1], prompt=<tratamento>, n=2, input_fidelity="high", quality="medium")
+edit(images=[raw2], prompt=<tratamento>, n=2, input_fidelity="high", quality="medium")
 ```
-→ 2 imagens tratadas por SKU (`kind="individual"`, `source_sku=SKU`).
-`input_fidelity="high"` preserva fidelidade ao produto real (parâmetro da
-API OpenAI `/v1/images/edits`); `quality="medium"` mantém a mesma escolha já
-usada pelo texto-imagem atual.
+→ 2 variações × 2 fotos brutas = 4 imagens tratadas por SKU (`kind="individual"`,
+`source_sku=SKU`). `input_fidelity="high"` preserva fidelidade ao produto real
+(parâmetro da API OpenAI `/v1/images/edits`); `quality="medium"` mantém a
+mesma escolha já usada pelo texto-imagem atual.
 
 ### RF5 — Composição de capa (quando o anúncio tem N>1 SKUs)
 Uma chamada adicional, combinando as fotos brutas de **todos** os SKUs do
