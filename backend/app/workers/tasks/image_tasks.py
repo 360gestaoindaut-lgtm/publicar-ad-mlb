@@ -8,6 +8,78 @@ async def _fetch_upload_token(seller, db) -> str:
     return await get_valid_access_token(seller, db)
 
 
+async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | None:
+    """Tenta o caminho image-to-image (fotos brutas reais do seller). Retorna
+    None se o seller não tiver SellerImageConfig ou faltar alguma foto bruta
+    — nesses casos o chamador deve cair no texto-imagem existente, inalterado."""
+    from sqlalchemy import select
+    from app.models.seller_image_config import SellerImageConfig
+    from app.models.listing_image import ListingImage
+    from app.models.product_image import ProductImage
+    from app.services.seller_image_source_service import resolve_listing_skus, fetch_all_raw_photos
+    from app.services.image_engines.openai_edit_engine import OpenAIEditEngine
+    from app.services.image_service import validate_image, ensure_dimensions, MLPictureService
+
+    config = (
+        await db.execute(
+            select(SellerImageConfig).where(SellerImageConfig.seller_id == listing.seller_id)
+        )
+    ).scalar_one_or_none()
+    if config is None:
+        return None
+
+    skus = await resolve_listing_skus(listing)
+    if not skus:
+        return None
+
+    raw_photos_by_sku = await fetch_all_raw_photos(config.raw_base_url, skus)
+    if raw_photos_by_sku is None:
+        return None
+
+    treatment_prompt = (
+        "Professional e-commerce product photo. Pure white background, "
+        "studio lighting, product centered and isolated, no text, no watermark, "
+        "no people. Keep the exact product from the reference image — same "
+        "shape, color, materials and proportions — only improve background, "
+        "lighting and framing."
+    )
+
+    engine = OpenAIEditEngine()
+    ml_pic = MLPictureService()
+    saved = 0
+
+    # Imagens individuais — sempre, uma chamada de edição por foto bruta.
+    for sku in skus:
+        for raw_photo in raw_photos_by_sku[sku]:
+            variants = await engine.edit(images=[raw_photo], prompt=treatment_prompt, n=2)
+            for img_bytes in variants:
+                if not validate_image(img_bytes):
+                    continue
+                img_bytes = ensure_dimensions(img_bytes)
+                if img_bytes is None:
+                    continue
+                ml_picture_id = await ml_pic.upload(img_bytes, access_token)
+
+                db.add(ListingImage(
+                    listing_id=listing.id,
+                    ml_picture_id=ml_picture_id,
+                    status="uploaded",
+                    sort_order=saved,
+                    kind="individual",
+                    source_sku=sku,
+                ))
+                db.add(ProductImage(
+                    seller_id=listing.seller_id,
+                    sku=sku,
+                    ml_picture_id=ml_picture_id,
+                    source="openai_edit",
+                    is_approved=False,
+                ))
+                saved += 1
+
+    return saved
+
+
 async def _generate_images_async(listing_id: str) -> dict:
     from sqlalchemy import select
 
@@ -71,6 +143,31 @@ async def _generate_images_async(listing_id: str) -> dict:
             await db.execute(select(Seller).where(Seller.id == listing.seller_id))
         ).scalar_one()
         access_token = await _fetch_upload_token(seller, db)
+
+        i2i_saved = await _try_i2i_generation(db, listing, seller, access_token)
+        if i2i_saved is not None:
+            if i2i_saved == 0:
+                raise RuntimeError("Nenhuma imagem válida foi gerada pelo motor 'openai_edit'")
+            if listing.created_via == "batch":
+                images = (await db.execute(
+                    select(ListingImage).where(ListingImage.listing_id == listing.id)
+                )).scalars().all()
+                for img in images:
+                    img.approved = True
+                prod_imgs = (await db.execute(
+                    select(ProductImage).where(
+                        ProductImage.seller_id == listing.seller_id,
+                        ProductImage.sku == sku,
+                    )
+                )).scalars().all()
+                for pi in prod_imgs:
+                    pi.is_approved = True
+                listing.status = "generating_description"
+                await db.commit()
+            else:
+                listing.status = "pending_image_approval"
+                await db.commit()
+            return {"listing_id": listing_id, "images_saved": i2i_saved, "source": "i2i"}
 
         engine_state = await get_engine_state(db)
 
