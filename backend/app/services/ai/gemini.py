@@ -60,11 +60,16 @@ class GeminiProvider(AIProvider):
             color=color, size=size, capacity=capacity, material=material, gender=gender,
         )
         text = await self._call(prompt, max_tokens=500 if batch_mode else 2000, temperature=0.6)
+        parsed = json.loads(_extract_json(text))
+        if not isinstance(parsed, dict):
+            raise RuntimeError(f"Gemini não retornou um JSON de título válido: {text[:300]!r}")
         if batch_mode:
-            parsed = json.loads(_extract_json(text))
             title = parsed.get("title", "").strip()[:60]
             return [{"title": title, "score": None, "rationale": "batch_auto"}]
-        return json.loads(_extract_json(text))["titles"]
+        titles = parsed.get("titles")
+        if not isinstance(titles, list):
+            raise RuntimeError(f"Gemini não retornou a lista 'titles': {text[:300]!r}")
+        return titles
 
     async def generate_description(self, listing_data: dict) -> str:
         prompt = build_description_prompt(listing_data)
