@@ -48,6 +48,40 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
     ml_pic = MLPictureService()
     saved = 0
 
+    # Capa composta — só quando o anúncio tem mais de 1 SKU. Falha na
+    # composição não afeta as imagens individuais: a capa é simplesmente
+    # pulada, e a 1a imagem individual assume a posição de capa por ordem
+    # natural do array `pictures` (sort_order=0).
+    if len(skus) > 1:
+        all_raw_photos = [photo for sku in skus for photo in raw_photos_by_sku[sku]]
+        cover_prompt = (
+            "Professional e-commerce product photo showing all the items from "
+            "the reference images together, composed in a single realistic scene. "
+            "Pure white background, studio lighting, items clearly visible and "
+            "proportionate to each other, no text, no watermark, no people."
+        )
+        try:
+            cover_variants = await engine.edit(images=all_raw_photos, prompt=cover_prompt, n=1)
+        except Exception:
+            cover_variants = []
+
+        for img_bytes in cover_variants:
+            if not validate_image(img_bytes):
+                continue
+            img_bytes = ensure_dimensions(img_bytes)
+            if img_bytes is None:
+                continue
+            ml_picture_id = await ml_pic.upload(img_bytes, access_token)
+            db.add(ListingImage(
+                listing_id=listing.id,
+                ml_picture_id=ml_picture_id,
+                status="uploaded",
+                sort_order=saved,
+                kind="cover_composed",
+                source_sku=None,
+            ))
+            saved += 1
+
     # Imagens individuais — sempre, uma chamada de edição por foto bruta.
     for sku in skus:
         for raw_photo in raw_photos_by_sku[sku]:
