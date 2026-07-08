@@ -73,7 +73,7 @@ export function TitleSelector({ listingId, titles }: Props) {
                   <div className="flex items-center gap-1 mt-2">
                     <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
                     <span className="text-xs text-slate-500">
-                      Pontuação IA: {(title.ai_score * 100).toFixed(0)}%
+                      Pontuação IA: {(title.ai_score * 10).toFixed(0)}%
                     </span>
                   </div>
                 )}
