@@ -18,6 +18,9 @@ class ListingImage(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="generating")
     approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sort_order: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="individual")
+    source_sku: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    r2_write_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
