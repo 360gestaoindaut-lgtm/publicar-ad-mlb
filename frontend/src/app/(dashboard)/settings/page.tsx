@@ -4,12 +4,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { listSellers } from "@/lib/api/sellers"
 import { getMLConnectUrl } from "@/lib/api/auth"
 import { getTitleConfigs, createTitleConfig, updateTitleConfig, deleteTitleConfig } from "@/lib/api/title-configs"
+import { getSellerImageConfig, upsertSellerImageConfig } from "@/lib/api/seller-image-config"
 import { useSeller } from "@/contexts/SellerContext"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Loader2, CheckCircle, ExternalLink, ShoppingBag, Plus, Check, Tag, Pencil, Trash2 } from "lucide-react"
+import { Loader2, CheckCircle, ExternalLink, ShoppingBag, Plus, Check, Tag, Pencil, Trash2, ImageIcon } from "lucide-react"
 import { toast } from "sonner"
 import { useState } from "react"
 import { format } from "date-fns"
@@ -98,6 +99,47 @@ export default function SettingsPage() {
       toast.error(err.message || "Erro ao remover configuração.")
     },
   })
+
+  // --- Seller Image Config form state ---
+  const [imageConfigForm, setImageConfigForm] = useState({
+    raw_base_url: "",
+    write_bucket_name: "",
+    write_endpoint_url: "",
+    write_access_key_id: "",
+    write_secret_access_key: "",
+  })
+
+  const { data: imageConfig } = useQuery({
+    queryKey: ["seller-image-config"],
+    queryFn: getSellerImageConfig,
+    retry: 1,
+  })
+
+  const imageConfigMutation = useMutation({
+    mutationFn: upsertSellerImageConfig,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["seller-image-config"] })
+      toast.success("Configuração de imagens salva.")
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Erro ao salvar configuração de imagens.")
+    },
+  })
+
+  function handleImageConfigSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!imageConfigForm.raw_base_url.trim()) {
+      toast.error("URL base de leitura é obrigatória.")
+      return
+    }
+    imageConfigMutation.mutate({
+      raw_base_url: imageConfigForm.raw_base_url.trim(),
+      write_bucket_name: imageConfigForm.write_bucket_name.trim() || null,
+      write_endpoint_url: imageConfigForm.write_endpoint_url.trim() || null,
+      write_access_key_id: imageConfigForm.write_access_key_id.trim() || null,
+      write_secret_access_key: imageConfigForm.write_secret_access_key.trim() || null,
+    })
+  }
 
   function resetForm() {
     setFormData(EMPTY_FORM)
@@ -545,6 +587,89 @@ export default function SettingsPage() {
               Adicionar configuração
             </Button>
           )}
+        </CardContent>
+      </Card>
+
+      {/* ── Configuração de imagens ──────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ImageIcon className="w-5 h-5 text-purple-500" />
+            Configuração de imagens
+          </CardTitle>
+          <CardDescription className="mt-1">
+            Bucket próprio com as fotos brutas do produto (2 por SKU: <code>SKU-1.jpg</code>, <code>SKU-2.jpg</code>).
+            Sem essa configuração, o pipeline continua gerando imagens por IA a partir do texto, como hoje.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleImageConfigSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="ic-raw-url">
+                URL base de leitura <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                id="ic-raw-url"
+                placeholder="ex: https://pub-xxx.r2.dev/sku"
+                defaultValue={imageConfig?.raw_base_url ?? ""}
+                onChange={(e) => setImageConfigForm((f) => ({ ...f, raw_base_url: e.target.value }))}
+              />
+            </div>
+
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">
+              Escrita de volta (opcional — best-effort)
+            </p>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="ic-write-bucket">Bucket de escrita</Label>
+                <Input
+                  id="ic-write-bucket"
+                  placeholder="ex: meu-bucket"
+                  defaultValue={imageConfig?.write_bucket_name ?? ""}
+                  onChange={(e) => setImageConfigForm((f) => ({ ...f, write_bucket_name: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ic-write-endpoint">Endpoint S3-compatível</Label>
+                <Input
+                  id="ic-write-endpoint"
+                  placeholder="ex: https://account.r2.cloudflarestorage.com"
+                  defaultValue={imageConfig?.write_endpoint_url ?? ""}
+                  onChange={(e) => setImageConfigForm((f) => ({ ...f, write_endpoint_url: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ic-write-key">Access Key ID</Label>
+                <Input
+                  id="ic-write-key"
+                  type="password"
+                  placeholder={imageConfig?.has_write_credentials ? "•••••••• (configurado)" : "opcional"}
+                  onChange={(e) => setImageConfigForm((f) => ({ ...f, write_access_key_id: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ic-write-secret">Secret Access Key</Label>
+                <Input
+                  id="ic-write-secret"
+                  type="password"
+                  placeholder={imageConfig?.has_write_credentials ? "•••••••• (configurado)" : "opcional"}
+                  onChange={(e) => setImageConfigForm((f) => ({ ...f, write_secret_access_key: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <Button type="submit" size="sm" disabled={imageConfigMutation.isPending}>
+              {imageConfigMutation.isPending ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  Salvando...
+                </>
+              ) : (
+                "Salvar configuração"
+              )}
+            </Button>
+          </form>
         </CardContent>
       </Card>
     </div>
