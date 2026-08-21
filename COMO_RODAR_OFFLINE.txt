@@ -1,0 +1,135 @@
+========================================================================
+COMO RODAR O PROJETO "Publicar AD MLB" SEM O CLAUDE (sem internet/IA)
+========================================================================
+
+Este arquivo existe para o caso de você precisar subir o ambiente
+sozinho, sem internet ou sem acesso ao Claude Code. Guarde-o.
+
+Pré-requisitos instalados na máquina:
+  - Docker Desktop (com Docker Compose) — para backend/banco/workers
+  - Node.js 18+ e npm — para o frontend
+  - Git (opcional, só se for clonar o repositório)
+
+O projeto NÃO precisa de internet para rodar localmente, EXCETO para:
+  - Chamadas reais à IA (Gemini/Claude) e à API do Mercado Livre
+  - As demais partes (login, catálogo, kanban, etc.) funcionam offline
+    normalmente, pois banco, cache e frontend rodam na sua máquina.
+
+------------------------------------------------------------------------
+1. CONFIGURAR VARIÁVEIS DE AMBIENTE (só na primeira vez)
+------------------------------------------------------------------------
+
+Na raiz do projeto, verifique se existe o arquivo ".env".
+Se NÃO existir, copie o modelo e preencha os valores:
+
+    copy .env.example .env
+
+Edite o ".env" com um editor de texto e preencha (peça as senhas/chaves
+reais para quem administra o projeto, se não souber):
+  - POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+  - REDIS_PASSWORD
+  - SECRET_KEY (chave aleatória, ex: gerada com "openssl rand -hex 32")
+  - FERNET_KEY (chave de criptografia dos tokens do Mercado Livre)
+  - ML_APP_ID / ML_CLIENT_SECRET (app do Mercado Livre)
+  - GEMINI_API_KEY ou ANTHROPIC_API_KEY (provedor de IA)
+
+Sem internet, os campos de IA e Mercado Livre não vão funcionar, mas o
+resto do sistema (login, catálogo de produtos, kanban de anúncios)
+continua acessível.
+
+------------------------------------------------------------------------
+2. SUBIR O BACKEND (API + banco + workers) — Docker Compose
+------------------------------------------------------------------------
+
+Abra um terminal (PowerShell ou Prompt de Comando) na pasta raiz do
+projeto ("C:\Desenvolvimento\Publicar AD MLB") e rode:
+
+    docker compose up -d
+
+Isso sobe 5 containers:
+  - postgres   (banco de dados, porta 5433)
+  - redis      (fila/cache, porta 6379)
+  - backend    (API FastAPI, porta 8001)
+  - celery_worker (processa tarefas em segundo plano)
+  - celery_beat   (agendador de tarefas)
+
+Para conferir se subiu certo:
+
+    docker compose ps
+
+Todos devem aparecer como "Up" (postgres e redis também "healthy").
+
+Para checar se a API está respondendo, abra no navegador ou rode:
+
+    curl http://localhost:8001/api/v1/health
+
+Resposta esperada: {"status":"ok","services":{"database":"ok","redis":"ok"}}
+
+Se precisar aplicar migrações de banco (só necessário após atualizar
+o código e existirem migrations novas):
+
+    docker compose exec backend alembic upgrade head
+
+Para ver logs em caso de erro:
+
+    docker compose logs -f backend
+    docker compose logs -f celery_worker
+
+------------------------------------------------------------------------
+3. SUBIR O FRONTEND (site) — Next.js
+------------------------------------------------------------------------
+
+Em OUTRO terminal, entre na pasta do frontend e rode:
+
+    cd frontend
+    npm install        (só na primeira vez, ou se der erro de módulo)
+    npm run dev
+
+Aguarde aparecer "Ready" no terminal. Depois, acesse no navegador:
+
+    http://localhost:3000
+
+------------------------------------------------------------------------
+4. PARAR O AMBIENTE
+------------------------------------------------------------------------
+
+Para parar o frontend: volte no terminal dele e aperte Ctrl+C.
+
+Para parar o backend/banco/workers:
+
+    docker compose down
+
+(Isso NÃO apaga os dados do banco, pois ficam em volume do Docker.
+ Para apagar tudo, incluindo dados, use "docker compose down -v" —
+ CUIDADO, isso apaga o banco de dados permanentemente.)
+
+------------------------------------------------------------------------
+5. PROBLEMAS COMUNS
+------------------------------------------------------------------------
+
+- "porta já em uso": provavelmente o Docker já está rodando de uma
+  sessão anterior. Rode "docker compose ps" para conferir antes de
+  tentar subir de novo.
+
+- Frontend não conecta na API: confira se o backend está em
+  http://localhost:8001 (não 8000) e se o container "backend" está
+  "Up" no "docker compose ps".
+
+- Erro de login: o usuário admin é criado durante a Fase 1 de setup.
+  Se não souber a senha, pergunte a quem administra o projeto — ela
+  não fica neste arquivo por segurança.
+
+- Funcionalidades de IA (geração de título/descrição/imagens) e de
+  publicação no Mercado Livre EXIGEM internet, pois dependem de APIs
+  externas (Gemini/Claude e Mercado Livre). Sem internet, essas ações
+  vão falhar mesmo com o ambiente local funcionando — isso é esperado.
+
+------------------------------------------------------------------------
+Portas usadas (referência rápida)
+------------------------------------------------------------------------
+  Backend (API)....... http://localhost:8001
+  Frontend (site)..... http://localhost:3000
+  Postgres............ localhost:5433
+  Redis............... localhost:6379
+  pgAdmin (opcional).. http://localhost:5050
+========================================================================
