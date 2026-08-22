@@ -1,6 +1,9 @@
 import asyncio
+import logging
 
 from app.workers.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
 
 
 async def _fetch_upload_token(seller, db) -> str:
@@ -128,6 +131,15 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
 
         only_sku = skus[0]
         cover_bytes = try_deterministic_cover(raw_photos_by_sku[only_sku][0])
+        # Sinal binário de acerto/erro para medir a taxa real em produção sem
+        # instrumentar o serviço nem persistir nada.
+        logger.info(
+            "deterministic_cover listing_id=%s seller_id=%s sku=%s result=%s",
+            listing.id,
+            listing.seller_id,
+            only_sku,
+            "hit" if cover_bytes is not None else "miss",
+        )
         if cover_bytes is not None:
             prepared, verdict = _prepare_image_for_upload(
                 cover_bytes, requires_white_bg=requires_white_bg
