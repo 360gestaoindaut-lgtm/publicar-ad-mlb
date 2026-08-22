@@ -219,3 +219,221 @@ class TestTryI2iGeneration:
         ]
         assert all(img.kind == "individual" for img in added_images)
         assert added_images[0].sort_order == 0  # 1a imagem individual assume a posicao de capa
+
+
+# --------------------------------------------------------------------------
+# Fase 2: capa deterministica (sem custo de IA) antes do loop pago
+# --------------------------------------------------------------------------
+
+
+def _make_i2i_db():
+    mock_config = MagicMock()
+    mock_config.raw_base_url = "https://pub-xxx.r2.dev/sku"
+
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_config
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    added = []
+    mock_db.add = MagicMock(side_effect=added.append)
+    return mock_db, added
+
+
+class TestDeterministicCoverIntegration:
+    @pytest.mark.asyncio
+    async def test_successful_cover_takes_sort_order_zero_without_extra_ai_call(self):
+        """A capa sai do recorte; o engine pago segue sendo chamado 2x (1 por foto bruta)."""
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added = _make_i2i_db()
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1", b"raw2"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=b"cover-deterministica",
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(
+                side_effect=[[b"v1", b"v2"], [b"v3", b"v4"]]
+            )
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=["cover", "pic1", "pic2", "pic3", "pic4"]
+            )
+            saved = await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        assert saved == 5, "1 capa deterministica + 4 imagens de IA"
+        assert mock_engine_cls.return_value.edit.await_count == 2, (
+            "a capa nao pode gerar chamada extra ao engine pago"
+        )
+
+        covers = [o for o in added if getattr(o, "kind", None) == "cover_deterministic"]
+        assert len(covers) == 1
+        assert covers[0].sort_order == 0
+        assert covers[0].source_sku == "SKU0001"
+        assert covers[0].status == "uploaded"
+
+    @pytest.mark.asyncio
+    async def test_ai_images_start_at_sort_order_one_when_cover_succeeds(self):
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added = _make_i2i_db()
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1", b"raw2"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=b"cover-deterministica",
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(
+                side_effect=[[b"v1", b"v2"], [b"v3", b"v4"]]
+            )
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=["cover", "pic1", "pic2", "pic3", "pic4"]
+            )
+            await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        individuais = [o for o in added if getattr(o, "kind", None) == "individual"]
+        assert [o.sort_order for o in individuais] == [1, 2, 3, 4]
+
+    @pytest.mark.asyncio
+    async def test_failed_cover_keeps_previous_behaviour(self):
+        """Capa deterministica falhou: resultado identico ao de antes da Fase 2."""
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added = _make_i2i_db()
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1", b"raw2"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=None,
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(
+                side_effect=[[b"v1", b"v2"], [b"v3", b"v4"]]
+            )
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=["pic1", "pic2", "pic3", "pic4"]
+            )
+            saved = await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        assert saved == 4, "mesmo total de antes da Fase 2"
+        assert mock_engine_cls.return_value.edit.await_count == 2
+        assert [o for o in added if getattr(o, "kind", None) == "cover_deterministic"] == []
+        individuais = [o for o in added if getattr(o, "kind", None) == "individual"]
+        assert [o.sort_order for o in individuais] == [0, 1, 2, 3], "IA volta a ocupar sort_order 0"
+
+    @pytest.mark.asyncio
+    async def test_cover_is_skipped_for_kits_with_more_than_one_sku(self):
+        """Kit (N>1) segue fora de escopo, igual ao resto do i2i."""
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added = _make_i2i_db()
+        listing = _make_listing()
+
+        with patch(
+            "app.services.seller_image_source_service.resolve_listing_skus",
+            new_callable=AsyncMock,
+            return_value=["SKU0001", "SKU0002"],
+        ), patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"a1", b"a2"], "SKU0002": [b"b1", b"b2"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=b"nao-deveria-ser-usada",
+        ) as mock_cover, patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(
+                return_value=[b"v1", b"v2"]
+            )
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=[f"pic{i}" for i in range(20)]
+            )
+            await _try_i2i_generation(mock_db, listing, MagicMock(), "token")
+
+        mock_cover.assert_not_called()
+        assert [o for o in added if getattr(o, "kind", None) == "cover_deterministic"] == []
+
+    @pytest.mark.asyncio
+    async def test_cover_uses_the_first_raw_photo(self):
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, _ = _make_i2i_db()
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"primeira", b"segunda"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=b"cover",
+        ) as mock_cover, patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(
+                side_effect=[[b"v1"], [b"v2"]]
+            )
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=["cover", "pic1", "pic2"]
+            )
+            await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        mock_cover.assert_called_once_with(b"primeira")

@@ -1,6 +1,9 @@
 import asyncio
+import logging
 
 from app.workers.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
 
 
 async def _fetch_upload_token(seller, db) -> str:
@@ -119,6 +122,55 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
                 source_sku=None,
             ))
             saved += 1
+
+    # Capa determinística — só para 1 SKU, e antes do loop pago. Se a foto
+    # bruta tiver fundo uniforme, a capa sai por recorte, sem custo de IA. Se
+    # não der, `saved` continua 0 e tudo segue exatamente como antes.
+    if len(skus) == 1:
+        from app.services.image_deterministic_service import try_deterministic_cover
+
+        only_sku = skus[0]
+        cover_bytes = try_deterministic_cover(raw_photos_by_sku[only_sku][0])
+        # Sinal binário de acerto/erro para medir a taxa real em produção sem
+        # instrumentar o serviço nem persistir nada.
+        logger.info(
+            "deterministic_cover listing_id=%s seller_id=%s sku=%s result=%s",
+            listing.id,
+            listing.seller_id,
+            only_sku,
+            "hit" if cover_bytes is not None else "miss",
+        )
+        if cover_bytes is not None:
+            prepared, verdict = _prepare_image_for_upload(
+                cover_bytes, requires_white_bg=requires_white_bg
+            )
+            if prepared is None:
+                db.add(ListingImage(
+                    listing_id=listing.id,
+                    status="validation_failed",
+                    validation_error=verdict.reason,
+                    sort_order=saved,
+                    kind="cover_deterministic",
+                    source_sku=only_sku,
+                ))
+            else:
+                ml_picture_id = await ml_pic.upload(prepared, access_token)
+                db.add(ListingImage(
+                    listing_id=listing.id,
+                    ml_picture_id=ml_picture_id,
+                    status="uploaded",
+                    sort_order=saved,
+                    kind="cover_deterministic",
+                    source_sku=only_sku,
+                ))
+                db.add(ProductImage(
+                    seller_id=listing.seller_id,
+                    sku=only_sku,
+                    ml_picture_id=ml_picture_id,
+                    source="deterministic",
+                    is_approved=False,
+                ))
+                saved += 1
 
     # Imagens individuais — sempre, uma chamada de edição por foto bruta.
     for sku in skus:
