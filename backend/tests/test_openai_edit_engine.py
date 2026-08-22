@@ -48,6 +48,38 @@ class TestOpenAIEditEngine:
         assert "input_fidelity" not in data
 
     @pytest.mark.asyncio
+    async def test_gpt_image_2_requests_1200_square_natively(self):
+        """gpt-image-2 aceita resolucao arbitraria divisivel por 16 -> pede o alvo do ML."""
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        mock_response.json.return_value = {"data": [{"b64_json": _b64_image()}]}
+
+        mock_post = AsyncMock(return_value=mock_response)
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.__aenter__.return_value.post = mock_post
+            engine = OpenAIEditEngine()
+            with patch.object(engine.settings, "openai_image_model", "gpt-image-2"):
+                await engine.edit(images=[b"x"], prompt="p", n=1)
+
+        assert mock_post.await_args.kwargs["data"]["size"] == "1200x1200"
+
+    @pytest.mark.asyncio
+    async def test_legacy_model_falls_back_to_supported_square_size(self):
+        """gpt-image-1/1.5 so aceitam 1024x1024, 1536x1024 e 1024x1536."""
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        mock_response.json.return_value = {"data": [{"b64_json": _b64_image()}]}
+
+        mock_post = AsyncMock(return_value=mock_response)
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.__aenter__.return_value.post = mock_post
+            engine = OpenAIEditEngine()
+            with patch.object(engine.settings, "openai_image_model", "gpt-image-1"):
+                await engine.edit(images=[b"x"], prompt="p", n=1)
+
+        assert mock_post.await_args.kwargs["data"]["size"] == "1024x1024"
+
+    @pytest.mark.asyncio
     async def test_legacy_model_still_sends_input_fidelity(self):
         mock_response = MagicMock()
         mock_response.is_success = True

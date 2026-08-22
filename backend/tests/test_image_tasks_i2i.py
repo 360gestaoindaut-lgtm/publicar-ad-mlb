@@ -1,6 +1,13 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.services.image_service import ImageValidationResult
+
+
+def _passthrough_prepare(image_bytes, requires_white_bg):
+    """Substitui o pos-processamento + QA nos testes: aprova e devolve os bytes."""
+    return image_bytes, ImageValidationResult(is_valid=True, errors=[])
+
 
 def _make_listing():
     listing = MagicMock()
@@ -68,9 +75,12 @@ class TestTryI2iGeneration:
         ), patch(
             "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
         ) as mock_engine_cls, patch(
-            "app.services.image_service.validate_image", return_value=True
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
         ), patch(
-            "app.services.image_service.ensure_dimensions", side_effect=lambda b: b
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
         ), patch(
             "app.services.image_service.MLPictureService"
         ) as mock_ml_cls:
@@ -117,9 +127,12 @@ class TestTryI2iGeneration:
         ), patch(
             "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
         ) as mock_engine_cls, patch(
-            "app.services.image_service.validate_image", return_value=True
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
         ), patch(
-            "app.services.image_service.ensure_dimensions", side_effect=lambda b: b
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
         ), patch(
             "app.services.image_service.MLPictureService"
         ) as mock_ml_cls:
@@ -178,9 +191,12 @@ class TestTryI2iGeneration:
         ), patch(
             "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
         ) as mock_engine_cls, patch(
-            "app.services.image_service.validate_image", return_value=True
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
         ), patch(
-            "app.services.image_service.ensure_dimensions", side_effect=lambda b: b
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
         ), patch(
             "app.services.image_service.MLPictureService"
         ) as mock_ml_cls:

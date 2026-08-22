@@ -8,6 +8,33 @@ async def _fetch_upload_token(seller, db) -> str:
     return await get_valid_access_token(seller, db)
 
 
+def _prepare_image_for_upload(image_bytes: bytes, requires_white_bg: bool):
+    """Padroniza para 1200x1200 e roda o QA do ML antes do upload.
+
+    Devolve `(bytes_prontos, veredito)`. Se o veredito reprovar, os bytes vêm
+    None e o chamador registra a linha em listing_images sem subir nada.
+    """
+    from app.services.image_postprocess_service import normalize_to_square
+    from app.services.image_service import ImageValidationResult, validate_image
+
+    normalized = normalize_to_square(image_bytes)
+    if normalized is None:
+        return None, ImageValidationResult(
+            is_valid=False, errors=["bytes não são uma imagem válida"]
+        )
+
+    verdict = validate_image(normalized, category_requires_white_bg=requires_white_bg)
+    if not verdict.is_valid:
+        return None, verdict
+    return normalized, verdict
+
+
+async def _resolve_requires_white_bg(listing) -> bool:
+    """Se a categoria-raiz do anúncio exige fundo branco puro na capa."""
+    from app.services.category_service import category_requires_white_background
+    return await category_requires_white_background(listing.ml_category_id)
+
+
 async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | None:
     """Tenta o caminho image-to-image (fotos brutas reais do seller). Retorna
     None se o seller não tiver SellerImageConfig ou faltar alguma foto bruta
@@ -18,7 +45,7 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
     from app.models.product_image import ProductImage
     from app.services.seller_image_source_service import resolve_listing_skus, fetch_all_raw_photos
     from app.services.image_engines.openai_edit_engine import OpenAIEditEngine
-    from app.services.image_service import validate_image, ensure_dimensions, MLPictureService
+    from app.services.image_service import MLPictureService
 
     config = (
         await db.execute(
@@ -47,6 +74,9 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
     engine = OpenAIEditEngine()
     ml_pic = MLPictureService()
     saved = 0
+    # Fundo branco só é exigido na capa (sort_order 0) — as demais imagens
+    # podem ter fundo contextual mesmo nas categorias com padronização rígida.
+    requires_white_bg = await _resolve_requires_white_bg(listing)
 
     # Capa composta — só quando o anúncio tem mais de 1 SKU. Falha na
     # composição não afeta as imagens individuais: a capa é simplesmente
@@ -66,12 +96,20 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
             cover_variants = []
 
         for img_bytes in cover_variants:
-            if not validate_image(img_bytes):
+            prepared, verdict = _prepare_image_for_upload(
+                img_bytes, requires_white_bg=requires_white_bg and saved == 0
+            )
+            if prepared is None:
+                db.add(ListingImage(
+                    listing_id=listing.id,
+                    status="validation_failed",
+                    validation_error=verdict.reason,
+                    sort_order=saved,
+                    kind="cover_composed",
+                    source_sku=None,
+                ))
                 continue
-            img_bytes = ensure_dimensions(img_bytes)
-            if img_bytes is None:
-                continue
-            ml_picture_id = await ml_pic.upload(img_bytes, access_token)
+            ml_picture_id = await ml_pic.upload(prepared, access_token)
             db.add(ListingImage(
                 listing_id=listing.id,
                 ml_picture_id=ml_picture_id,
@@ -87,12 +125,20 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
         for raw_photo in raw_photos_by_sku[sku]:
             variants = await engine.edit(images=[raw_photo], prompt=treatment_prompt, n=2)
             for img_bytes in variants:
-                if not validate_image(img_bytes):
+                prepared, verdict = _prepare_image_for_upload(
+                    img_bytes, requires_white_bg=requires_white_bg and saved == 0
+                )
+                if prepared is None:
+                    db.add(ListingImage(
+                        listing_id=listing.id,
+                        status="validation_failed",
+                        validation_error=verdict.reason,
+                        sort_order=saved,
+                        kind="individual",
+                        source_sku=sku,
+                    ))
                     continue
-                img_bytes = ensure_dimensions(img_bytes)
-                if img_bytes is None:
-                    continue
-                ml_picture_id = await ml_pic.upload(img_bytes, access_token)
+                ml_picture_id = await ml_pic.upload(prepared, access_token)
 
                 db.add(ListingImage(
                     listing_id=listing.id,
@@ -123,7 +169,7 @@ async def _generate_images_async(listing_id: str) -> dict:
     from app.models.product_image import ProductImage
     from app.models.seller import Seller
     from app.services.ai.service import get_ai_provider
-    from app.services.image_service import MLPictureService, validate_image, ensure_dimensions
+    from app.services.image_service import MLPictureService
 
     async with worker_session() as db:
         listing = (
@@ -184,7 +230,10 @@ async def _generate_images_async(listing_id: str) -> dict:
                 raise RuntimeError("Nenhuma imagem válida foi gerada pelo motor 'openai_edit'")
             if listing.created_via == "batch":
                 images = (await db.execute(
-                    select(ListingImage).where(ListingImage.listing_id == listing.id)
+                    select(ListingImage).where(
+                        ListingImage.listing_id == listing.id,
+                        ListingImage.status == "uploaded",
+                    )
                 )).scalars().all()
                 for img in images:
                     img.approved = True
@@ -234,15 +283,22 @@ async def _generate_images_async(listing_id: str) -> dict:
 
         ml_pic = MLPictureService()
         saved = 0
+        requires_white_bg = await _resolve_requires_white_bg(listing)
 
         for img_bytes in raw_images:
-            if not validate_image(img_bytes):
+            prepared, verdict = _prepare_image_for_upload(
+                img_bytes, requires_white_bg=requires_white_bg and saved == 0
+            )
+            if prepared is None:
+                db.add(ListingImage(
+                    listing_id=listing.id,
+                    status="validation_failed",
+                    validation_error=verdict.reason,
+                    sort_order=saved,
+                ))
                 continue
 
-            img_bytes = ensure_dimensions(img_bytes)
-            if img_bytes is None:
-                continue
-            ml_picture_id = await ml_pic.upload(img_bytes, access_token)
+            ml_picture_id = await ml_pic.upload(prepared, access_token)
 
             db.add(ListingImage(
                 listing_id=listing.id,
@@ -269,7 +325,10 @@ async def _generate_images_async(listing_id: str) -> dict:
         if listing.created_via == "batch":
             # Auto-aprovar todas as imagens geradas e suas entradas no índice SKU→imagem
             images = (await db.execute(
-                select(ListingImage).where(ListingImage.listing_id == listing.id)
+                select(ListingImage).where(
+                    ListingImage.listing_id == listing.id,
+                    ListingImage.status == "uploaded",
+                )
             )).scalars().all()
             for img in images:
                 img.approved = True

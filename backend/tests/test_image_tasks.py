@@ -385,3 +385,217 @@ class TestImageEngineDecisionFlow:
 
         assert mock_engine_state.current_engine == "gemini"
         mock_gemini_cls.return_value.generate.assert_called_once()
+
+
+# --------------------------------------------------------------------------
+# QA antes do upload (Passo 3): imagem reprovada nao sobe e nao trava o anuncio
+# --------------------------------------------------------------------------
+
+
+def _png(width: int, height: int, color=(255, 255, 255)) -> bytes:
+    import io as _io
+
+    from PIL import Image
+
+    buf = _io.BytesIO()
+    Image.new("RGB", (width, height), color=color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _size_of(data: bytes):
+    import io as _io
+
+    from PIL import Image
+
+    return Image.open(_io.BytesIO(data)).size
+
+
+def _make_i2i_mocks():
+    """Mocks compartilhados do caminho image-to-image."""
+    mock_config = MagicMock()
+    mock_config.raw_base_url = "https://pub-xxx.r2.dev/sku"
+
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_config
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    added = []
+    mock_db.add = MagicMock(side_effect=added.append)
+
+    listing = MagicMock()
+    listing.id = "lid"
+    listing.seller_id = "sid"
+    listing.sku_external_id = "SKU0001"
+    listing.created_via = "manual"
+
+    return mock_db, added, listing
+
+
+class TestPrepareImageForUpload:
+    def test_valid_image_is_normalized_to_1200_and_approved(self):
+        from app.workers.tasks.image_tasks import _prepare_image_for_upload
+
+        prepared, verdict = _prepare_image_for_upload(_png(1536, 1024), requires_white_bg=False)
+
+        assert verdict.is_valid
+        assert prepared is not None
+        assert _size_of(prepared) == (1200, 1200)
+
+    def test_corrupted_bytes_are_rejected_with_reason(self):
+        from app.workers.tasks.image_tasks import _prepare_image_for_upload
+
+        prepared, verdict = _prepare_image_for_upload(b"garbage", requires_white_bg=False)
+
+        assert prepared is None
+        assert not verdict.is_valid
+        assert verdict.reason
+
+    def test_non_white_cover_rejected_only_when_category_requires_it(self):
+        from app.workers.tasks.image_tasks import _prepare_image_for_upload
+
+        colored = _png(1200, 1200, color=(200, 90, 40))
+
+        prepared_ok, verdict_ok = _prepare_image_for_upload(colored, requires_white_bg=False)
+        assert prepared_ok is not None
+        assert verdict_ok.is_valid
+
+        prepared_bad, verdict_bad = _prepare_image_for_upload(colored, requires_white_bg=True)
+        assert prepared_bad is None
+        assert "fundo" in verdict_bad.reason
+
+    def test_upscales_small_image_above_ml_minimum(self):
+        """520x520 passa no minimo de 500 e sai padronizada em 1200."""
+        from app.workers.tasks.image_tasks import _prepare_image_for_upload
+
+        prepared, verdict = _prepare_image_for_upload(_png(520, 520), requires_white_bg=False)
+
+        assert verdict.is_valid
+        assert _size_of(prepared) == (1200, 1200)
+
+
+class TestUploadSkipsInvalidImages:
+    """Uma imagem ruim vira linha validation_failed; as boas seguem para o ML."""
+
+    @pytest.mark.asyncio
+    async def test_bad_image_recorded_and_good_images_still_uploaded(self):
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added, listing = _make_i2i_mocks()
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(
+                return_value=[_png(1200, 1200), b"corrupted"]
+            )
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic1")
+
+            saved = await _try_i2i_generation(mock_db, listing, MagicMock(), "token")
+
+        assert saved == 1, "so a imagem valida conta para o total"
+        assert mock_ml_cls.return_value.upload.await_count == 1, "a ruim nao foi enviada ao ML"
+
+        failed = [o for o in added if getattr(o, "status", None) == "validation_failed"]
+        assert len(failed) == 1
+        assert failed[0].ml_picture_id is None
+        assert failed[0].validation_error
+
+    @pytest.mark.asyncio
+    async def test_all_images_invalid_yields_zero_saved(self):
+        """Zero imagens validas -> chamador bloqueia a publicacao (comportamento existente)."""
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added, listing = _make_i2i_mocks()
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"bad", b"worse"])
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic1")
+
+            saved = await _try_i2i_generation(mock_db, listing, MagicMock(), "token")
+
+        assert saved == 0
+        assert mock_ml_cls.return_value.upload.await_count == 0
+        assert len([o for o in added if getattr(o, "status", None) == "validation_failed"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_white_bg_checked_while_cover_slot_is_unfilled(self):
+        """Fundo colorido numa categoria que exige branco: reprova a capa."""
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added, listing = _make_i2i_mocks()
+        colored = _png(1200, 1200, color=(200, 90, 40))
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[colored, colored])
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic1")
+
+            saved = await _try_i2i_generation(mock_db, listing, MagicMock(), "token")
+
+        failed = [o for o in added if getattr(o, "status", None) == "validation_failed"]
+        assert saved == 0
+        assert len(failed) == 2, "enquanto a capa nao for preenchida, a checagem continua"
+        assert all("fundo" in o.validation_error for o in failed)
+
+    @pytest.mark.asyncio
+    async def test_white_bg_not_enforced_on_images_after_the_cover(self):
+        """Capa branca ocupa sort_order 0; a 2a imagem colorida e aceita."""
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added, listing = _make_i2i_mocks()
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(
+                return_value=[_png(1200, 1200), _png(1200, 1200, color=(200, 90, 40))]
+            )
+            mock_ml_cls.return_value.upload = AsyncMock(side_effect=["pic1", "pic2"])
+
+            saved = await _try_i2i_generation(mock_db, listing, MagicMock(), "token")
+
+        assert saved == 2, "a 2a imagem nao e capa, entao o fundo colorido passa"
+        assert [o for o in added if getattr(o, "status", None) == "validation_failed"] == []

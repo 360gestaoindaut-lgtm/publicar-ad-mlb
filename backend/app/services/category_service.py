@@ -12,6 +12,60 @@ _PREFILL_KEYS = {"BRAND", "GTIN", "ITEM_CONDITION", "SELLER_SKU", "MODEL",
                  "SELLER_PACKAGE_WEIGHT", "SELLER_PACKAGE_LENGTH",
                  "SELLER_PACKAGE_WIDTH", "SELLER_PACKAGE_HEIGHT"}
 
+# Categorias-raiz do site MLB que exigem fundo branco puro na foto de capa.
+# A Central de Aprendizagem do ML descreve a regra por agrupamento comercial
+# ("Tecnologia", "Beleza", "Saúde", "Supermercado"), que não são categorias-raiz
+# da árvore — cada agrupamento foi mapeado para os IDs de raiz reais abaixo,
+# confirmados um a um em GET /categories/{id} (path_from_root de tamanho 1).
+_WHITE_BG_ROOT_CATEGORIES: dict[str, str] = {
+    # Tecnologia
+    "MLB1051": "Celulares e Telefones",
+    "MLB1648": "Informática",
+    "MLB1000": "Eletrônicos, Áudio e Vídeo",
+    "MLB1039": "Câmeras e Acessórios",
+    "MLB1144": "Games",
+    "MLB5726": "Eletrodomésticos",
+    # Beleza
+    "MLB1246": "Beleza e Cuidado Pessoal",
+    # Saúde
+    "MLB264586": "Saúde",
+    # Supermercado
+    "MLB1403": "Alimentos e Bebidas",
+}
+
+
+async def get_root_category_id(category_id: str, token: str | None = None) -> str | None:
+    """Primeiro item de `path_from_root` da categoria — o ID da raiz.
+
+    `GET /categories/{id}` responde sem autenticação, então `token` é opcional.
+    Retorna None se a categoria não existir ou o ML estiver indisponível: o
+    chamador trata isso como "não sei", nunca como "exige branco".
+    """
+    if not category_id:
+        return None
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{_ML_API}/categories/{category_id}", headers=headers)
+        resp.raise_for_status()
+        path = resp.json().get("path_from_root") or []
+    except Exception:
+        return None
+    return path[0]["id"] if path else None
+
+
+async def category_requires_white_background(
+    category_id: str, token: str | None = None
+) -> bool:
+    """True se a categoria-raiz do anúncio exigir fundo branco puro na capa.
+
+    Resolve pela raiz, não pelo nome da categoria-folha. Em caso de falha na
+    consulta ao ML devolve False — a triagem de fundo branco é uma verificação
+    extra, e reprovar imagem por indisponibilidade do ML travaria o pipeline.
+    """
+    root_id = await get_root_category_id(category_id, token)
+    return root_id in _WHITE_BG_ROOT_CATEGORIES
+
 
 class CategoryService:
     def __init__(self, db: AsyncSession) -> None:
