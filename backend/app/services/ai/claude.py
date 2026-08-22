@@ -2,7 +2,12 @@ import json
 import httpx
 from app.config import get_settings
 from app.services.ai.base import AIProvider
-from app.services.ai.prompts import build_title_prompt, build_description_prompt, build_image_prompt_request
+from app.services.ai.prompts import (
+    build_title_prompt,
+    build_description_prompt,
+    build_image_prompt_request,
+    build_card_copy_prompt,
+)
 
 _BASE = "https://api.anthropic.com/v1/messages"
 
@@ -51,6 +56,16 @@ class ClaudeProvider(AIProvider):
     async def generate_image_prompt(self, brand: str, title: str, description: str) -> str:
         prompt = build_image_prompt_request(brand, title, description)
         return (await self._call(prompt, max_tokens=200, temperature=0.3)).strip()
+
+    async def generate_card_copy(self, source: dict) -> dict:
+        from app.services.ai.gemini import _extract_json
+
+        prompt = build_card_copy_prompt(source)
+        text = await self._call(prompt, max_tokens=1200, temperature=0.4)
+        parsed = json.loads(_extract_json(text))
+        if not isinstance(parsed, dict):
+            raise RuntimeError(f"Claude não retornou um JSON de card válido: {text[:300]!r}")
+        return parsed
 
     async def _call(self, prompt: str, max_tokens: int, temperature: float) -> str:
         async with httpx.AsyncClient(timeout=45.0) as client:
