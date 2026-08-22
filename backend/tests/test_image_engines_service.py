@@ -37,9 +37,11 @@ class TestGetEngineLabel:
     def test_openai_label_includes_configured_model(self):
         from app.services.image_engines.service import get_engine_label
 
+        from app.config import get_settings
+
         label = get_engine_label("openai")
         assert "OpenAI" in label
-        assert "gpt-image-1" in label
+        assert get_settings().openai_image_model in label
 
     def test_gemini_label(self):
         from app.services.image_engines.service import get_engine_label

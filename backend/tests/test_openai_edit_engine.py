@@ -27,8 +27,40 @@ class TestOpenAIEditEngine:
         assert result == [b"fake-edited-image-bytes"]
         call_kwargs = mock_post.await_args.kwargs
         assert call_kwargs["data"]["n"] == "2"
-        assert call_kwargs["data"]["input_fidelity"] == "high"
         assert len(call_kwargs["files"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_gpt_image_2_omits_input_fidelity(self):
+        """gpt-image-2 processa em alta fidelidade sozinho e rejeita o parametro."""
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        mock_response.json.return_value = {"data": [{"b64_json": _b64_image()}]}
+
+        mock_post = AsyncMock(return_value=mock_response)
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.__aenter__.return_value.post = mock_post
+            engine = OpenAIEditEngine()
+            with patch.object(engine.settings, "openai_image_model", "gpt-image-2"):
+                await engine.edit(images=[b"x"], prompt="p", n=1)
+
+        data = mock_post.await_args.kwargs["data"]
+        assert data["model"] == "gpt-image-2"
+        assert "input_fidelity" not in data
+
+    @pytest.mark.asyncio
+    async def test_legacy_model_still_sends_input_fidelity(self):
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        mock_response.json.return_value = {"data": [{"b64_json": _b64_image()}]}
+
+        mock_post = AsyncMock(return_value=mock_response)
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.__aenter__.return_value.post = mock_post
+            engine = OpenAIEditEngine()
+            with patch.object(engine.settings, "openai_image_model", "gpt-image-1"):
+                await engine.edit(images=[b"x"], prompt="p", n=1)
+
+        assert mock_post.await_args.kwargs["data"]["input_fidelity"] == "high"
 
     @pytest.mark.asyncio
     async def test_multiple_input_images_sent_as_multiple_files(self):

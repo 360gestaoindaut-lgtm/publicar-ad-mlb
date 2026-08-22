@@ -6,6 +6,15 @@ from app.services.image_engines.base import ImageEngineUnavailableError
 
 _OPENAI_EDITS_URL = "https://api.openai.com/v1/images/edits"
 
+# A partir do gpt-image-2 a OpenAI processa toda imagem de entrada em alta
+# fidelidade automaticamente e rejeita `input_fidelity` no payload. Modelos
+# anteriores (gpt-image-1, gpt-image-1.5) ainda exigem o parâmetro explícito.
+_MODELS_WITHOUT_INPUT_FIDELITY = ("gpt-image-2",)
+
+
+def _accepts_input_fidelity(model: str) -> bool:
+    return not model.startswith(_MODELS_WITHOUT_INPUT_FIDELITY)
+
 
 class OpenAIEditEngine:
     def __init__(self) -> None:
@@ -16,14 +25,16 @@ class OpenAIEditEngine:
             ("image[]", (f"input_{i}.jpg", img, "image/jpeg"))
             for i, img in enumerate(images)
         ]
+        model = self.settings.openai_image_model
         data = {
-            "model": self.settings.openai_image_model,
+            "model": model,
             "prompt": prompt,
             "n": str(n),
             "quality": "medium",
-            "input_fidelity": "high",
             "output_format": "jpeg",
         }
+        if _accepts_input_fidelity(model):
+            data["input_fidelity"] = "high"
         try:
             async with httpx.AsyncClient(timeout=90.0) as client:
                 resp = await client.post(
