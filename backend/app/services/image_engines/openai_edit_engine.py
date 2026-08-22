@@ -11,9 +11,28 @@ _OPENAI_EDITS_URL = "https://api.openai.com/v1/images/edits"
 # anteriores (gpt-image-1, gpt-image-1.5) ainda exigem o parâmetro explícito.
 _MODELS_WITHOUT_INPUT_FIDELITY = ("gpt-image-2",)
 
+# Tamanhos aceitos pelo /v1/images/edits (referência oficial da OpenAI):
+# o gpt-image-2 aceita resoluções arbitrárias WIDTHxHEIGHT desde que ambos os
+# lados sejam divisíveis por 16 e a proporção fique entre 1:3 e 3:1 — 1200 é
+# divisível por 16, então dá para pedir o alvo do ML (1200x1200) nativamente.
+# Modelos anteriores (gpt-image-1, gpt-image-1.5) só aceitam os tamanhos
+# fixos 1024x1024, 1536x1024 e 1024x1536; nesses casos pedimos o quadrado e o
+# pós-processamento faz o upscale até 1200.
+_MODELS_WITH_ARBITRARY_SIZE = ("gpt-image-2",)
+_FALLBACK_SQUARE_SIZE = "1024x1024"
+
 
 def _accepts_input_fidelity(model: str) -> bool:
     return not model.startswith(_MODELS_WITHOUT_INPUT_FIDELITY)
+
+
+def _size_for_model(model: str) -> str:
+    """Maior quadrado que o modelo aceita, alinhado ao alvo 1200x1200 do ML."""
+    from app.services.image_postprocess_service import ML_TARGET_DIM
+
+    if model.startswith(_MODELS_WITH_ARBITRARY_SIZE):
+        return f"{ML_TARGET_DIM}x{ML_TARGET_DIM}"
+    return _FALLBACK_SQUARE_SIZE
 
 
 class OpenAIEditEngine:
@@ -32,6 +51,7 @@ class OpenAIEditEngine:
             "n": str(n),
             "quality": "medium",
             "output_format": "jpeg",
+            "size": _size_for_model(model),
         }
         if _accepts_input_fidelity(model):
             data["input_fidelity"] = "high"
