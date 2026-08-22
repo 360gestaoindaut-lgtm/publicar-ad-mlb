@@ -8,6 +8,7 @@ from app.api.v1.endpoints.products import router as products_router
 from app.api.v1.endpoints.seller_title_configs import router as title_configs_router
 from app.api.v1.endpoints.listings_bulk import router as listings_bulk_router
 from app.api.v1.endpoints.system import router as system_router
+from app.api.v1.endpoints.seller_image_config import router as seller_image_config_router
 
 router = APIRouter()
 router.include_router(auth_router)
@@ -19,3 +20,4 @@ router.include_router(products_router)
 router.include_router(title_configs_router)
 router.include_router(listings_bulk_router, prefix="/listings")
 router.include_router(system_router)
+router.include_router(seller_image_config_router)
