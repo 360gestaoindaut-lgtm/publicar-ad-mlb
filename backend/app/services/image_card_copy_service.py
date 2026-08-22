@@ -82,7 +82,7 @@ def _build_source(listing, attributes: list | None) -> dict:
     }
 
 
-def _sanitize_angle(kind: str, raw_angle) -> "CardCopy | None":
+def _sanitize_angle(kind: str, raw_angle) -> CardCopy | None:
     """Valida e normaliza um angulo (benefits/usage/specs) devolvido pelo LLM.
 
     Devolve None (angulo descartado) para qualquer coisa que nao vira um
@@ -119,7 +119,7 @@ def _sanitize_angle(kind: str, raw_angle) -> "CardCopy | None":
     return CardCopy(kind=kind, title=title, bullets=bullets)
 
 
-async def generate_card_copy(listing, attributes: list | None = None) -> list["CardCopy"]:
+async def generate_card_copy(listing, attributes: list | None = None) -> list[CardCopy]:
     """Copy dos 3 cards, na ordem de CARD_KINDS.
 
     Resiliente por angulo: um angulo ruim e descartado, os outros seguem.
