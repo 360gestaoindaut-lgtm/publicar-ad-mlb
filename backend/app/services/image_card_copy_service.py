@@ -16,6 +16,7 @@ de formato — e engolida e vira lista vazia, nunca excecao. O anuncio tem que
 seguir publicavel mesmo sem os cards.
 """
 import logging
+import re
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,45 @@ MAX_TITLE_CHARS = 40
 MAX_BULLET_CHARS = 50
 MIN_BULLETS = 2
 MAX_BULLETS = 3
+
+# Unidades de medida legitimas — servem so pra impedir que o padrao de preco
+# coma uma especificacao real ("12,50 m", "3,50 cm", "1,25 l").
+_UNIDADES = r"(?:cm|mm|km|kg|mg|ml|hz|pol|un|[mglvw]|%|\"|')"
+
+# Conteudo que o Mercado Livre nao aceita dentro da imagem do anuncio: preco,
+# contato, promessa de entrega e superlativo nao comprovavel. O prompt ja
+# proibe tudo isso, mas prompt e conselho — em modo batch a imagem e
+# auto-aprovada e vai pro ar sem revisao humana, entao o servico tambem
+# desconfia do CONTEUDO, do mesmo jeito que ja desconfia do TAMANHO.
+#
+# Padroes propositalmente estreitos: derrubar um bullet legitimo ("12V",
+# "3,5cm", "500ml", "1,5 m") custa mais do que deixar passar um caso de borda
+# raro. Menção a concorrente nao da pra detectar por regex e continua so no
+# prompt.
+_BANNED_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
+    ("preco_moeda", re.compile(r"r\$", re.IGNORECASE)),
+    # Decimal de 2 casas que NAO e seguido de unidade: "199,90" cai,
+    # "12,50 m" e "3,50cm" passam. "3,5cm" nem chega aqui (1 casa decimal).
+    ("preco_numerico", re.compile(
+        rf"\d{{2,}}[.,]\d{{2}}\b(?!\s*{_UNIDADES}\b)", re.IGNORECASE)),
+    ("url", re.compile(r"https?://|www\.", re.IGNORECASE)),
+    ("telefone", re.compile(r"\(\d{2}\)\s?\d{4,5}")),
+    ("promessa_de_entrega", re.compile(r"frete\s+gr[áa]tis", re.IGNORECASE)),
+    ("superlativo", re.compile(r"melhor\s+do\s+mercado", re.IGNORECASE)),
+)
+
+
+def _banned_reason(text: str) -> str | None:
+    """Nome do padrao proibido encontrado em `text`, ou None se estiver limpo.
+
+    Roda no texto CRU, antes do truncamento: se o LLM escreveu preco, a
+    intencao dele e o que importa: truncar o preco pra fora nao pode servir
+    de lavagem pro resto do bullet.
+    """
+    for name, pattern in _BANNED_PATTERNS:
+        if pattern.search(text):
+            return name
+    return None
 
 
 @dataclass(frozen=True)
@@ -97,6 +137,17 @@ def _sanitize_angle(kind: str, raw_angle) -> CardCopy | None:
     if not isinstance(title, str) or not title.strip():
         logger.info("card_copy kind=%s result=dropped reason=titulo_vazio", kind)
         return None
+    title = title.strip()
+    # Titulo proibido derruba o angulo inteiro: nao existe card sem titulo
+    # (titulo vazio ja e motivo de descarte logo acima), entao nao ha o que
+    # salvar como ha nos bullets.
+    padrao = _banned_reason(title)
+    if padrao is not None:
+        logger.info(
+            "card_copy kind=%s result=dropped alvo=titulo reason=conteudo_proibido padrao=%s",
+            kind, padrao,
+        )
+        return None
     title = _truncate(title, MAX_TITLE_CHARS)
 
     bullets_raw = raw_angle.get("bullets")
@@ -104,6 +155,15 @@ def _sanitize_angle(kind: str, raw_angle) -> CardCopy | None:
     if isinstance(bullets_raw, list):
         for item in bullets_raw:
             if not isinstance(item, str) or not item.strip():
+                continue
+            padrao = _banned_reason(item)
+            if padrao is not None:
+                # So o bullet cai; o angulo sobrevive se ainda sobrarem
+                # MIN_BULLETS — a checagem logo abaixo cuida disso.
+                logger.info(
+                    "card_copy kind=%s result=dropped alvo=bullet reason=conteudo_proibido padrao=%s",
+                    kind, padrao,
+                )
                 continue
             bullets.append(_truncate(item, MAX_BULLET_CHARS))
             if len(bullets) >= MAX_BULLETS:
@@ -134,9 +194,13 @@ async def generate_card_copy(listing, attributes: list | None = None) -> list[Ca
         provider = get_ai_provider()
         raw = await provider.generate_card_copy(source)
     except Exception as exc:
+        # exc_info: a excecao morre aqui por design, entao o traceback neste
+        # log e a unica forma de saber em producao se foi provider, rede,
+        # JSON ou chave faltando — `reason=%s` sozinho nao distingue.
         logger.warning(
             "card_copy listing_id=%s result=failed reason=%s",
             getattr(listing, "id", None), exc,
+            exc_info=True,
         )
         return []
 
