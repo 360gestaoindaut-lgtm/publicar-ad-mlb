@@ -133,9 +133,14 @@ def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[
 
 
 def _truncate_with_ellipsis(line: str, font: ImageFont.FreeTypeFont, max_width: int) -> str:
-    """Corta `line` ate caber em `max_width` com "..." no final."""
-    if font.getlength(line) <= max_width:
-        return line
+    """Garante "..." no final de `line`, cortando caracteres se precisar pra
+    caber em `max_width` com a reticencia incluida.
+
+    Sem bypass para o caso em que `line` sozinha ja cabe: quem chama esta
+    funcao so faz isso quando ha conteudo do titulo alem do limite de linhas,
+    entao a reticencia precisa aparecer sempre — senao um titulo cortado bem
+    na borda de uma palavra vira truncamento silencioso, sem sinalizar que
+    sobrou texto."""
     while line and font.getlength(line + _ELLIPSIS) > max_width:
         line = line[:-1].rstrip()
     return f"{line}{_ELLIPSIS}" if line else _ELLIPSIS
@@ -184,22 +189,35 @@ def _draw_rule(draw: ImageDraw.ImageDraw) -> None:
 @dataclass(frozen=True)
 class _LineSpec:
     """Uma linha ja quebrada, pronta pra desenhar: texto, fonte, cor, altura
-    de linha e se e a primeira linha de um bullet (pro marcador)."""
+    de linha, o espaco a aplicar ANTES dela (gap de secao — 0 pra linhas de
+    continuacao dentro do mesmo titulo/bullet) e se e a primeira linha de um
+    bullet (pro marcador).
+
+    `gap_before` existe pra `_draw_text_block` e `_build_text_block` nunca
+    poderem divergir sobre quanto espaco entra no desenho: os dois somam
+    exatamente os mesmos campos desta classe, nenhum valor de espacamento
+    fica solto em variavel externa.
+    """
 
     text: str
     font: ImageFont.FreeTypeFont
     color: tuple[int, int, int]
     line_height: float
     x: int
+    gap_before: float = 0
     is_bullet_start: bool = False
 
 
 def _build_text_block(title: str, bullets: list[str]) -> tuple[list[_LineSpec], float]:
     """Monta a sequencia de linhas (titulo + bullets, ja quebrados) e devolve
     a altura total do bloco, sem desenhar nada — usado tanto pro render
-    quanto pelos testes de geometria."""
+    quanto pelos testes de geometria.
+
+    A altura total e a soma de `line_height + gap_before` de cada `_LineSpec`
+    — os mesmos campos que `_draw_text_block` usa pra avancar o `y` — entao
+    nao ha como o espaco contado aqui divergir do espaco realmente desenhado.
+    """
     lines: list[_LineSpec] = []
-    total_height = 0.0
 
     title = (title or "").strip()
     if title:
@@ -208,26 +226,30 @@ def _build_text_block(title: str, bullets: list[str]) -> tuple[list[_LineSpec], 
         wrapped = _wrap_title(title, font, _TITLE_MAX_WIDTH, _TITLE_MAX_LINES)
         for line in wrapped:
             lines.append(_LineSpec(line, font, _TITLE_COLOR, lh, _TITLE_X))
-            total_height += lh
 
     clean_bullets = [b.strip() for b in bullets if b and b.strip()]
-    if title and clean_bullets:
-        total_height += _TITLE_TO_BULLETS_GAP
 
     bfont = _bullet_font()
     blh = _line_height(bfont, _BULLET_LINE_HEIGHT)
     for i, bullet in enumerate(clean_bullets):
-        if i > 0:
-            total_height += _BULLET_GAP
         wrapped = _wrap_text(bullet, bfont, _BULLET_MAX_WIDTH)
         if not wrapped:
             continue
         for j, line in enumerate(wrapped):
+            gap = 0.0
+            if j == 0:
+                if i == 0 and title:
+                    gap = _TITLE_TO_BULLETS_GAP
+                elif i > 0:
+                    gap = _BULLET_GAP
             lines.append(
-                _LineSpec(line, bfont, _BULLET_COLOR, blh, _BULLET_TEXT_X, is_bullet_start=(j == 0))
+                _LineSpec(
+                    line, bfont, _BULLET_COLOR, blh, _BULLET_TEXT_X,
+                    gap_before=gap, is_bullet_start=(j == 0),
+                )
             )
-            total_height += blh
 
+    total_height = sum(spec.line_height + spec.gap_before for spec in lines)
     return lines, total_height
 
 
@@ -243,6 +265,7 @@ def _layout_text_block(title: str, bullets: list[str]) -> tuple[list[_LineSpec],
 def _draw_text_block(draw: ImageDraw.ImageDraw, lines: list[_LineSpec], start_y: float) -> None:
     y = start_y
     for spec in lines:
+        y += spec.gap_before
         if spec.is_bullet_start:
             marker_cy = y + spec.line_height / 2
             r = _BULLET_MARKER_RADIUS

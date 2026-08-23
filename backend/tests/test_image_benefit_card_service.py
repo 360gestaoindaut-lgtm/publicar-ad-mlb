@@ -8,13 +8,39 @@ from app.services.image_benefit_card_service import (
     CardRenderError,
     _bullet_font,
     _contain_fit,
+    _draw_text_block,
     _layout_text_block,
+    _line_height,
     _title_font,
+    _wrap_title,
+    _BULLET_GAP,
+    _BULLET_LINE_HEIGHT,
     _TEXT_BAND_Y0,
     _TEXT_BAND_Y1,
+    _TITLE_LINE_HEIGHT,
+    _TITLE_MAX_LINES,
+    _TITLE_MAX_WIDTH,
+    _TITLE_TO_BULLETS_GAP,
     _wrap_text,
     render_benefit_card,
 )
+
+
+class _RecordingDraw:
+    """Substituto de `ImageDraw.Draw` que so grava as posicoes de `text()`,
+    pra testar `_draw_text_block` sem depender de sniffing de pixel."""
+
+    def __init__(self):
+        self.text_calls: list[tuple[float, float, str]] = []
+
+    def text(self, xy, text, font=None, fill=None):
+        self.text_calls.append((xy[0], xy[1], text))
+
+    def ellipse(self, *args, **kwargs):
+        pass
+
+    def line(self, *args, **kwargs):
+        pass
 
 
 def _photo(width: int, height: int, color=(80, 120, 160), fmt="JPEG") -> bytes:
@@ -100,12 +126,37 @@ class TestWrapText:
 
 
 class TestVerticalCentering:
+    def test_total_height_matches_independent_sum_of_constants(self):
+        """Recalcula a altura esperada a partir das constantes cruas (metrica
+        de fonte + gaps de secao), sem usar `_build_text_block`/`_layout_text_block`
+        pra chegar la — se os gaps sumirem do calculo real, este numero diverge."""
+        title_lh = _line_height(_title_font(), _TITLE_LINE_HEIGHT)
+        bullet_lh = _line_height(_bullet_font(), _BULLET_LINE_HEIGHT)
+        expected_height = title_lh + _TITLE_TO_BULLETS_GAP + bullet_lh + _BULLET_GAP + bullet_lh
+
+        _lines, total_height, _start_y = _layout_text_block(
+            "Titulo curto", ["Primeiro bullet", "Segundo bullet"]
+        )
+        assert total_height == pytest.approx(expected_height, abs=0.01)
+
     def test_two_bullets_block_is_vertically_centered(self):
+        """Compara o gap medido contra uma formula de centralizacao calculada
+        com a altura esperada de forma independente (nao a `total_height`
+        devolvida pela propria funcao) — testar `top_gap == bottom_gap` sozinho
+        e tautologico, os dois vem da mesma formula pra qualquer altura."""
+        title_lh = _line_height(_title_font(), _TITLE_LINE_HEIGHT)
+        bullet_lh = _line_height(_bullet_font(), _BULLET_LINE_HEIGHT)
+        expected_height = title_lh + _TITLE_TO_BULLETS_GAP + bullet_lh + _BULLET_GAP + bullet_lh
+        band_height = _TEXT_BAND_Y1 - _TEXT_BAND_Y0
+        expected_top_gap = (band_height - expected_height) / 2
+
         _lines, total_height, start_y = _layout_text_block(
             "Titulo curto", ["Primeiro bullet", "Segundo bullet"]
         )
         top_gap = start_y - _TEXT_BAND_Y0
         bottom_gap = _TEXT_BAND_Y1 - (start_y + total_height)
+
+        assert top_gap == pytest.approx(expected_top_gap, abs=0.5)
         assert top_gap == pytest.approx(bottom_gap, abs=2.0)
 
     def test_block_fits_inside_band(self):
@@ -114,6 +165,33 @@ class TestVerticalCentering:
         )
         assert start_y >= _TEXT_BAND_Y0
         assert start_y + total_height <= _TEXT_BAND_Y1 + 1e-6
+
+    def test_draw_positions_reflect_the_section_gaps(self):
+        """Exercita `_draw_text_block` de verdade (nao so os numeros que
+        `_build_text_block` contou) com um `ImageDraw` falso, e confere que a
+        distancia entre as posicoes DESENHADAS inclui o gap de secao — e
+        exatamente o que ficou faltando quando os gaps eram contados em
+        `total_height` mas nunca somados ao `y` do desenho."""
+        lines, total_height, start_y = _layout_text_block(
+            "Titulo curto", ["Primeiro bullet", "Segundo bullet"]
+        )
+        assert len(lines) == 3  # 1 linha de titulo + 2 bullets de 1 linha cada
+
+        fake_draw = _RecordingDraw()
+        _draw_text_block(fake_draw, lines, start_y)
+        ys = [y for _, y, _ in fake_draw.text_calls]
+        assert len(ys) == 3
+
+        title_line, bullet1, bullet2 = lines
+        assert bullet1.gap_before == pytest.approx(_TITLE_TO_BULLETS_GAP)
+        assert bullet2.gap_before == pytest.approx(_BULLET_GAP)
+
+        assert ys[1] - ys[0] == pytest.approx(title_line.line_height + bullet1.gap_before)
+        assert ys[2] - ys[1] == pytest.approx(bullet1.line_height + bullet2.gap_before)
+
+        # A ultima posicao desenhada + sua altura fecha exatamente o total_height
+        # contado — o desenho real e a contagem nao podem mais divergir.
+        assert (ys[-1] + bullet2.line_height) - start_y == pytest.approx(total_height)
 
 
 # --------------------------------------------------------------------------
@@ -188,6 +266,81 @@ class TestAccents:
         img = _open(result)
         assert img.size == (CARD_DIM, CARD_DIM)
         assert img.format == "JPEG"
+
+
+# --------------------------------------------------------------------------
+# Titulo com mais conteudo do que cabe em 2 linhas: truncamento com "..."
+# --------------------------------------------------------------------------
+
+
+class TestTitleTruncation:
+    _LONG_TITLE = (
+        "Kit completo de ferramentas profissionais para manutencao domestica "
+        "com maleta resistente e garantia estendida de fabrica"
+    )
+
+    def test_title_that_would_wrap_past_two_lines_gets_truncated(self):
+        font = _title_font()
+        # Confirma a premissa do teste: sem o limite de linhas, este titulo
+        # realmente estouraria 2 linhas — senao o teste nao provaria nada.
+        raw_wrap = _wrap_text(self._LONG_TITLE, font, _TITLE_MAX_WIDTH)
+        assert len(raw_wrap) > _TITLE_MAX_LINES
+
+        wrapped = _wrap_title(self._LONG_TITLE, font, _TITLE_MAX_WIDTH, _TITLE_MAX_LINES)
+        assert len(wrapped) == _TITLE_MAX_LINES
+        assert wrapped[-1].endswith("...")
+        for line in wrapped:
+            assert font.getlength(line) <= _TITLE_MAX_WIDTH
+
+    def test_short_title_is_not_truncated(self):
+        font = _title_font()
+        wrapped = _wrap_title("Titulo curto", font, _TITLE_MAX_WIDTH, _TITLE_MAX_LINES)
+        assert wrapped == ["Titulo curto"]
+        assert not wrapped[-1].endswith("...")
+
+    def test_render_end_to_end_with_long_title_stays_within_two_lines(self):
+        result = render_benefit_card(_photo(900, 900), self._LONG_TITLE, ["Bullet unico"])
+        img = _open(result)
+        assert img.size == (CARD_DIM, CARD_DIM)
+
+
+# --------------------------------------------------------------------------
+# So titulo ou so bullets: sem gap fantasma
+# --------------------------------------------------------------------------
+
+
+class TestTitleOnlyOrBulletsOnly:
+    def test_title_only_has_no_gap_and_height_is_just_the_title(self):
+        lines, total_height, _start_y = _layout_text_block("Titulo sozinho", [])
+        assert len(lines) == 1
+        assert lines[0].gap_before == 0
+
+        expected_height = _line_height(_title_font(), _TITLE_LINE_HEIGHT)
+        assert total_height == pytest.approx(expected_height, abs=0.01)
+
+    def test_bullets_only_has_no_gap_before_the_first_bullet(self):
+        lines, total_height, _start_y = _layout_text_block(
+            "", ["Primeiro bullet", "Segundo bullet"]
+        )
+        assert len(lines) == 2
+        assert lines[0].gap_before == 0
+        assert lines[1].gap_before == pytest.approx(_BULLET_GAP)
+
+        bullet_lh = _line_height(_bullet_font(), _BULLET_LINE_HEIGHT)
+        expected_height = bullet_lh + _BULLET_GAP + bullet_lh
+        assert total_height == pytest.approx(expected_height, abs=0.01)
+
+    def test_render_title_only_does_not_crash(self):
+        result = render_benefit_card(_photo(800, 800), "Somente titulo", [])
+        img = _open(result)
+        assert img.size == (CARD_DIM, CARD_DIM)
+
+    def test_render_bullets_only_does_not_crash(self):
+        result = render_benefit_card(
+            _photo(800, 800), "", ["Bullet unico", "Outro bullet"]
+        )
+        img = _open(result)
+        assert img.size == (CARD_DIM, CARD_DIM)
 
 
 # --------------------------------------------------------------------------
