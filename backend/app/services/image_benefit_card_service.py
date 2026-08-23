@@ -13,11 +13,14 @@ centro vertical do bloco de texto e o motivo real de existir de
 branco embaixo do texto.
 """
 import io
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+logger = logging.getLogger(__name__)
 
 # __file__ e app/services/image_benefit_card_service.py, entao parents[1] e app/.
 _FONT_DIR = Path(__file__).resolve().parents[1] / "assets" / "fonts"
@@ -42,6 +45,9 @@ _RULE_X1 = 1110
 
 _TEXT_BAND_Y0 = 700
 _TEXT_BAND_Y1 = 1110
+# Respiro entre o fim da faixa de texto e a borda do canvas: e o limite duro
+# que o clamp de `_layout_text_block` usa pra nada ser desenhado fora do card.
+_BOTTOM_MARGIN = CARD_DIM - _TEXT_BAND_Y1  # 90px
 
 _TITLE_SIZE = 58
 _TITLE_X = 90
@@ -81,10 +87,15 @@ def _bullet_font(size: int = _BULLET_SIZE) -> ImageFont.FreeTypeFont:
 
 
 def _line_height(font: ImageFont.FreeTypeFont, multiplier: float) -> float:
-    """Altura de linha a partir da metrica da fonte (ascent+descent), nao um
-    valor chutado — dois tamanhos de fonte diferentes nao tem a mesma altura."""
-    ascent, descent = font.getmetrics()
-    return (ascent + descent) * multiplier
+    """Altura de linha = corpo da fonte x entrelinha, a mesma convencao com
+    que a geometria da faixa de texto foi orcada (titulo 58px x 1.2, bullet
+    38px x 1.35).
+
+    `ascent + descent` da Inter da ~22% a mais que o corpo (58 -> 71px), e
+    esse excedente estourava a faixa de 410px com a copy maxima que o
+    saneamento permite. Nao e "chutar valor fixo": `font.size` e a metrica do
+    corpo, e cada tamanho de fonte continua com altura de linha propria."""
+    return font.size * multiplier
 
 
 def _max_prefix_length(word: str, font: ImageFont.FreeTypeFont, max_width: int) -> int:
@@ -255,10 +266,35 @@ def _build_text_block(title: str, bullets: list[str]) -> tuple[list[_LineSpec], 
 
 def _layout_text_block(title: str, bullets: list[str]) -> tuple[list[_LineSpec], float, float]:
     """Devolve (linhas, altura total, y inicial) com o bloco centralizado
-    verticalmente na faixa de texto (`_TEXT_BAND_Y0`..`_TEXT_BAND_Y1`)."""
-    lines, total_height = _build_text_block(title, bullets)
+    verticalmente na faixa de texto (`_TEXT_BAND_Y0`..`_TEXT_BAND_Y1`).
+
+    Dois mecanismos garantem que nada seja desenhado fora da faixa, porque
+    centralizar sozinho nao garante nada: um bloco maior que a faixa
+    centralizado continua transbordando dos dois lados.
+
+    1. Se o bloco nao couber, o ultimo bullet e descartado ate caber. Copy no
+       maximo do saneamento (titulo de 40 chars em 2 linhas + 3 bullets de 50
+       chars) cabe folgada; o caso real de descarte e o bullet que quebra em
+       2 linhas por conter caractere largo.
+    2. Clamp duro no `start_y`: mesmo com um bloco que nao caiba de jeito
+       nenhum (titulo que ocupa 2 linhas gigantes), o desenho fica preso
+       dentro do canvas em vez de escorrer para fora de `CARD_DIM`.
+    """
     band_height = _TEXT_BAND_Y1 - _TEXT_BAND_Y0
+    kept = list(bullets or [])
+    lines, total_height = _build_text_block(title, kept)
+
+    while total_height > band_height and kept:
+        descartado = kept.pop()
+        logger.warning(
+            "benefit_card result=bullet_dropped reason=estouro_da_faixa restantes=%s texto=%r",
+            len(kept),
+            descartado[:60],
+        )
+        lines, total_height = _build_text_block(title, kept)
+
     start_y = _TEXT_BAND_Y0 + max((band_height - total_height) / 2, 0)
+    start_y = max(_TEXT_BAND_Y0, min(start_y, CARD_DIM - _BOTTOM_MARGIN - total_height))
     return lines, total_height, start_y
 
 

@@ -3,6 +3,11 @@ import io
 import pytest
 from PIL import Image
 
+from app.services.image_card_copy_service import (
+    MAX_BULLET_CHARS,
+    MAX_BULLETS,
+    MAX_TITLE_CHARS,
+)
 from app.services.image_benefit_card_service import (
     CARD_DIM,
     CardRenderError,
@@ -52,6 +57,19 @@ def _photo(width: int, height: int, color=(80, 120, 160), fmt="JPEG") -> bytes:
 
 def _open(data: bytes) -> Image.Image:
     return Image.open(io.BytesIO(data))
+
+
+# Copy exatamente no limite do que o saneamento da Task 1 deixa passar
+# (titulo de MAX_TITLE_CHARS, MAX_BULLETS bullets de MAX_BULLET_CHARS, com
+# acentos PT-BR). E o pior caso que a producao pode entregar ao renderizador,
+# entao e com ele que a geometria tem que ser testada — copy curta cabe na
+# faixa por construcao e nao prova nada.
+_MAX_TITLE = "Proteção térmica do treino ao escritório"
+_MAX_BULLETS = [
+    "Mantém bebidas geladas por até doze horas seguidas",
+    "Alça reforçada com costura dupla e ajuste em metal",
+    "Resistente à água e fácil de limpar com um pano só",
+]
 
 
 # --------------------------------------------------------------------------
@@ -159,12 +177,66 @@ class TestVerticalCentering:
         assert top_gap == pytest.approx(expected_top_gap, abs=0.5)
         assert top_gap == pytest.approx(bottom_gap, abs=2.0)
 
-    def test_block_fits_inside_band(self):
+    def test_maximal_copy_really_is_at_the_sanitizer_limits(self):
+        """Premissa dos testes de geometria: se a copy maxima usada aqui nao
+        for de fato o limite do saneamento, os testes abaixo nao provam nada."""
+        assert len(_MAX_TITLE) == MAX_TITLE_CHARS
+        assert len(_MAX_BULLETS) == MAX_BULLETS
+        for bullet in _MAX_BULLETS:
+            assert len(bullet) == MAX_BULLET_CHARS
+
+    def test_block_fits_inside_band_with_maximal_copy(self):
+        """Copy no maximo permitido pelo saneamento tem que caber na faixa.
+
+        Testar isso com titulo e bullets curtos e cego por construcao: a unica
+        forma de copy que nunca estoura.
+        """
+        _lines, total_height, start_y = _layout_text_block(_MAX_TITLE, _MAX_BULLETS)
+        assert start_y >= _TEXT_BAND_Y0
+        assert start_y + total_height <= _TEXT_BAND_Y1 + 1e-6
+
+    def test_block_fits_inside_band_with_short_copy(self):
         _lines, total_height, start_y = _layout_text_block(
             "Titulo curto", ["Primeiro bullet", "Segundo bullet"]
         )
         assert start_y >= _TEXT_BAND_Y0
         assert start_y + total_height <= _TEXT_BAND_Y1 + 1e-6
+
+    def test_block_fits_inside_band_with_wide_characters(self):
+        """Caracteres largos ("W" maiusculo) fazem cada bullet quebrar em 2
+        linhas; o bloco so cabe se o layout descartar bullet ate caber."""
+        wide_title = "W" * MAX_TITLE_CHARS
+        wide_bullets = ["W" * MAX_BULLET_CHARS] * MAX_BULLETS
+
+        lines, total_height, start_y = _layout_text_block(wide_title, wide_bullets)
+        assert start_y >= _TEXT_BAND_Y0
+        assert start_y + total_height <= _TEXT_BAND_Y1 + 1e-6
+        # Prova que o caso e mesmo o do descarte: os 3 bullets nao cabem.
+        assert sum(1 for spec in lines if spec.is_bullet_start) < MAX_BULLETS
+
+    def test_nothing_is_drawn_below_the_canvas(self):
+        """Nenhuma linha pode ser desenhada abaixo de CARD_DIM — nem no pior
+        caso de copy, nem com caracteres largos."""
+        casos = [
+            (_MAX_TITLE, _MAX_BULLETS),
+            ("W" * MAX_TITLE_CHARS, ["W" * MAX_BULLET_CHARS] * MAX_BULLETS),
+            ("M" * MAX_TITLE_CHARS, ["Bullet normal", "Outro bullet normal"]),
+        ]
+        for title, bullets in casos:
+            lines, _total_height, start_y = _layout_text_block(title, bullets)
+            fake_draw = _RecordingDraw()
+            _draw_text_block(fake_draw, lines, start_y)
+            baseline_final = fake_draw.text_calls[-1][1] + lines[-1].line_height
+            assert baseline_final <= CARD_DIM
+            assert baseline_final <= _TEXT_BAND_Y1 + 1e-6
+
+    def test_render_leaves_no_ink_below_the_text_band(self):
+        """Ponta a ponta, em pixel: nada de tinta abaixo da faixa de texto."""
+        result = render_benefit_card(_photo(1200, 1200), _MAX_TITLE, _MAX_BULLETS)
+        img = _open(result).convert("L")
+        abaixo = img.crop((0, _TEXT_BAND_Y1 + 2, CARD_DIM, CARD_DIM))
+        # 240 e folga para o ruido de compressao do JPEG em torno do branco.
+        assert min(abaixo.getdata()) > 240
 
     def test_draw_positions_reflect_the_section_gaps(self):
         """Exercita `_draw_text_block` de verdade (nao so os numeros que
