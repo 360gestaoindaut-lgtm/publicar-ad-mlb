@@ -746,3 +746,61 @@ class TestBenefitCardsIntegration:
         assert saved == 2, "so as individuais"
         mock_render.assert_not_called()
         assert _uploaded_kinds(added) == ["individual", "individual"]
+
+
+class TestBenefitCardsLogging:
+    """Os cards sao engolidos de proposito (nunca derrubam o anuncio), entao
+    estes logs sao o UNICO sinal de producao de que pararam de sair. Sem
+    traceback nao da pra separar falha de render, de QA, de upload ou de db —
+    por isso o `exc_info` e testado, nao so a mensagem."""
+
+    @pytest.mark.asyncio
+    async def test_falha_global_loga_com_traceback(self, caplog):
+        import logging
+
+        from app.workers.tasks.image_tasks import _append_benefit_cards
+
+        mock_db, _added = _make_cards_db()
+
+        with caplog.at_level(logging.WARNING, logger="app.workers.tasks.image_tasks"), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("provider caiu"),
+        ):
+            saved = await _append_benefit_cards(
+                mock_db, _make_listing(), "token",
+                base_photo=b"foto", source_sku="SKU0001", start_sort_order=2,
+            )
+
+        assert saved == 0
+        rec = next(r for r in caplog.records if "result=failed" in r.getMessage())
+        assert rec.exc_info is not None
+        assert rec.exc_info[0] is RuntimeError
+
+    @pytest.mark.asyncio
+    async def test_falha_de_um_card_loga_com_traceback(self, caplog):
+        import logging
+
+        from app.workers.tasks.image_tasks import _append_benefit_cards
+
+        mock_db, _added = _make_cards_db()
+
+        with caplog.at_level(logging.WARNING, logger="app.workers.tasks.image_tasks"), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=_card_copies("card_benefits"),
+        ), patch(
+            "app.services.image_benefit_card_service.render_benefit_card",
+            side_effect=ValueError("render quebrou"),
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ):
+            saved = await _append_benefit_cards(
+                mock_db, _make_listing(), "token",
+                base_photo=b"foto", source_sku="SKU0001", start_sort_order=2,
+            )
+
+        assert saved == 0
+        rec = next(r for r in caplog.records if "kind=card_benefits" in r.getMessage())
+        assert rec.exc_info is not None
+        assert rec.exc_info[0] is ValueError

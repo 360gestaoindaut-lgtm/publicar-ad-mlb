@@ -64,11 +64,15 @@ async def _append_benefit_cards(
         ).scalars().all()
         cards = await generate_card_copy(listing, attributes)
     except Exception as exc:
+        # exc_info: este log e o UNICO sinal de que os cards pararam de sair —
+        # o passo inteiro e engolido de proposito. Sem o traceback nao da pra
+        # separar falha de query, de provider ou de parse.
         logger.warning(
             "benefit_cards listing_id=%s sku=%s result=failed reason=%s",
             listing.id,
             source_sku,
             exc,
+            exc_info=True,
         )
         return 0
 
@@ -106,6 +110,7 @@ async def _append_benefit_cards(
                 source_sku,
                 card.kind,
                 exc,
+                exc_info=True,
             )
 
     logger.info(
