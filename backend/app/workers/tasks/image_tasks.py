@@ -38,6 +38,86 @@ async def _resolve_requires_white_bg(listing) -> bool:
     return await category_requires_white_background(listing.ml_category_id)
 
 
+async def _append_benefit_cards(
+    db, listing, access_token: str, base_photo: bytes, source_sku: str, start_sort_order: int
+) -> int:
+    """Gera os 3 cards de texto a partir da 1a foto individual bem-sucedida.
+
+    Devolve quantos cards subiram. Nunca levanta: qualquer falha vira log e
+    zero cards — o anúncio não pode cair por causa de um card.
+    """
+    from sqlalchemy import select
+
+    from app.models.listing_attribute import ListingAttribute
+    from app.models.listing_image import ListingImage
+    from app.services.image_benefit_card_service import render_benefit_card
+    from app.services.image_card_copy_service import generate_card_copy
+    from app.services.image_service import MLPictureService
+
+    try:
+        # Query própria: tocar `listing.attributes` (relacionamento lazy) aqui
+        # dentro levantaria MissingGreenlet — ver CLAUDE.md.
+        attributes = (
+            await db.execute(
+                select(ListingAttribute).where(ListingAttribute.listing_id == listing.id)
+            )
+        ).scalars().all()
+        cards = await generate_card_copy(listing, attributes)
+    except Exception as exc:
+        logger.warning(
+            "benefit_cards listing_id=%s sku=%s result=failed reason=%s",
+            listing.id,
+            source_sku,
+            exc,
+        )
+        return 0
+
+    ml_pic = MLPictureService()
+    saved = 0
+    for card in cards:
+        try:
+            card_bytes = render_benefit_card(base_photo, card.title, card.bullets)
+            # Card nunca é capa, então fundo branco puro nunca é exigido dele.
+            prepared, verdict = _prepare_image_for_upload(card_bytes, requires_white_bg=False)
+            if prepared is None:
+                logger.warning(
+                    "benefit_cards listing_id=%s sku=%s kind=%s result=rejected reason=%s",
+                    listing.id,
+                    source_sku,
+                    card.kind,
+                    verdict.reason,
+                )
+                continue
+            ml_picture_id = await ml_pic.upload(prepared, access_token)
+            db.add(ListingImage(
+                listing_id=listing.id,
+                ml_picture_id=ml_picture_id,
+                status="uploaded",
+                sort_order=start_sort_order + saved,
+                kind=card.kind,
+                source_sku=source_sku,
+            ))
+            saved += 1
+        except Exception as exc:
+            # Um card que falha não derruba os outros nem as imagens já salvas.
+            logger.warning(
+                "benefit_cards listing_id=%s sku=%s kind=%s result=failed reason=%s",
+                listing.id,
+                source_sku,
+                card.kind,
+                exc,
+            )
+
+    logger.info(
+        "benefit_cards listing_id=%s sku=%s requested=%s saved=%s",
+        listing.id,
+        source_sku,
+        len(cards),
+        saved,
+    )
+    return saved
+
+
 async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | None:
     """Tenta o caminho image-to-image (fotos brutas reais do seller). Retorna
     None se o seller não tiver SellerImageConfig ou faltar alguma foto bruta
@@ -173,6 +253,8 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
                 saved += 1
 
     # Imagens individuais — sempre, uma chamada de edição por foto bruta.
+    # A 1a que passa no QA e sobe vira a foto-base dos cards de texto.
+    first_individual_bytes: bytes | None = None
     for sku in skus:
         for raw_photo in raw_photos_by_sku[sku]:
             variants = await engine.edit(images=[raw_photo], prompt=treatment_prompt, n=2)
@@ -208,6 +290,20 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
                     is_approved=False,
                 ))
                 saved += 1
+                if first_individual_bytes is None:
+                    first_individual_bytes = prepared
+
+    # Cards de texto — só para 1 SKU e só se alguma individual subiu. Sem foto
+    # individual não há base para compor o card, então o passo é pulado.
+    if len(skus) == 1 and first_individual_bytes is not None:
+        saved += await _append_benefit_cards(
+            db,
+            listing,
+            access_token,
+            base_photo=first_individual_bytes,
+            source_sku=skus[0],
+            start_sort_order=saved,
+        )
 
     return saved
 
