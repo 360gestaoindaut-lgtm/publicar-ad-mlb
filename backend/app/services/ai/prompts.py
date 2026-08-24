@@ -183,3 +183,43 @@ ATRIBUTOS CONFIRMADOS:
 {attrs_text or "Não informados"}
 
 Responda EXCLUSIVAMENTE com o HTML, sem markdown, sem ```html, sem explicações."""
+
+
+# ── Card copy prompt ─────────────────────────────────────────────────────────
+
+def build_card_copy_prompt(source: dict) -> str:
+    """Copy dos 3 cards de imagem (benefícios, uso, especificações).
+
+    Roda ANTES de `generate_description` no pipeline, então não há descrição
+    gerada disponível ainda — a matéria-prima é só título, descrição do ERP,
+    marca, modelo e os atributos já confirmados. Por isso a regra
+    anti-invenção é a mais importante do prompt: com pouco material de
+    origem, é fácil o modelo "completar" uma especificação que não existe.
+    """
+    attrs_text = "\n".join(
+        f"- {a['attribute_name']}: {a['value_name']}"
+        for a in source.get("attributes", [])
+        if a.get("value_name")
+    )
+
+    return f"""Você é um redator especialista em e-commerce para o Mercado Livre Brasil.
+Crie a copy de 3 cards de imagem para o anúncio abaixo: benefícios, modo de uso e especificações.
+
+REGRAS OBRIGATÓRIAS:
+- Idioma: PORTUGUÊS DO BRASIL
+- Cada card tem um "title" (até 40 caracteres) e uma lista "bullets" com 2 a 3 itens (até 50 caracteres cada)
+- NUNCA invente especificação técnica (medida, composição, voltagem, capacidade, material) que não esteja no texto de origem abaixo
+- Se não houver dado suficiente para algum card (ex.: produto sem instrução de uso clara), escreva algo GENÉRICO e SEGURO em vez de inventar detalhe
+- Não mencione preço, prazo de entrega, concorrentes, nem use superlativo não comprovável ("o melhor do mercado", "número 1")
+
+DADOS DE ORIGEM:
+Título do anúncio: {source.get("selected_title") or ""}
+Descrição do ERP: {source.get("sku_description") or ""}
+Marca: {source.get("sku_brand") or ""}
+Modelo: {source.get("sku_model") or ""}
+
+ATRIBUTOS CONFIRMADOS:
+{attrs_text or "Não informados"}
+
+Responda EXCLUSIVAMENTE em JSON válido, sem markdown, sem ```json:
+{{"benefits": {{"title": "título até 40 chars", "bullets": ["bullet até 50 chars", "bullet até 50 chars"]}}, "usage": {{"title": "título até 40 chars", "bullets": ["bullet até 50 chars", "bullet até 50 chars"]}}, "specs": {{"title": "título até 40 chars", "bullets": ["bullet até 50 chars", "bullet até 50 chars"]}}}}"""

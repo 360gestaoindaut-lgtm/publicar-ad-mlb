@@ -69,6 +69,10 @@ class TestTryI2iGeneration:
         raw_photos = {"SKU0001": [b"raw1", b"raw2"]}
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.fetch_all_raw_photos",
             new_callable=AsyncMock,
             return_value=raw_photos,
@@ -117,6 +121,10 @@ class TestTryI2iGeneration:
         listing = _make_listing()
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.resolve_listing_skus",
             new_callable=AsyncMock,
             return_value=["SKU0001", "SKU0002"],
@@ -181,6 +189,10 @@ class TestTryI2iGeneration:
         }
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.resolve_listing_skus",
             new_callable=AsyncMock,
             return_value=["SKU0001", "SKU0002"],
@@ -248,6 +260,10 @@ class TestDeterministicCoverIntegration:
         mock_db, added = _make_i2i_db()
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.fetch_all_raw_photos",
             new_callable=AsyncMock,
             return_value={"SKU0001": [b"raw1", b"raw2"]},
@@ -292,6 +308,10 @@ class TestDeterministicCoverIntegration:
         mock_db, added = _make_i2i_db()
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.fetch_all_raw_photos",
             new_callable=AsyncMock,
             return_value={"SKU0001": [b"raw1", b"raw2"]},
@@ -329,6 +349,10 @@ class TestDeterministicCoverIntegration:
         mock_db, added = _make_i2i_db()
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.fetch_all_raw_photos",
             new_callable=AsyncMock,
             return_value={"SKU0001": [b"raw1", b"raw2"]},
@@ -370,6 +394,10 @@ class TestDeterministicCoverIntegration:
         listing = _make_listing()
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.resolve_listing_skus",
             new_callable=AsyncMock,
             return_value=["SKU0001", "SKU0002"],
@@ -410,6 +438,10 @@ class TestDeterministicCoverIntegration:
         mock_db, _ = _make_i2i_db()
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.fetch_all_raw_photos",
             new_callable=AsyncMock,
             return_value={"SKU0001": [b"primeira", b"segunda"]},
@@ -437,3 +469,338 @@ class TestDeterministicCoverIntegration:
             await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
 
         mock_cover.assert_called_once_with(b"primeira")
+
+
+# --------------------------------------------------------------------------
+# Fase 3: cards de beneficio/uso/especificacoes depois das imagens individuais
+# --------------------------------------------------------------------------
+
+
+def _make_cards_db(attributes=None):
+    """Como `_make_i2i_db`, mas respondendo tambem a query de atributos.
+
+    O `_append_benefit_cards` carrega os ListingAttribute por query propria
+    (nunca pelo relacionamento lazy), entao o mock de db precisa cobrir esse
+    caminho.
+    """
+    mock_db, added = _make_i2i_db()
+    mock_db.execute.return_value.scalars.return_value.all.return_value = (
+        attributes if attributes is not None else []
+    )
+    return mock_db, added
+
+
+def _card_copies(*kinds):
+    from app.services.image_card_copy_service import CardCopy
+
+    return [
+        CardCopy(kind=kind, title=f"Titulo {kind}", bullets=["bullet 1", "bullet 2"])
+        for kind in kinds
+    ]
+
+
+def _uploaded_kinds(added):
+    return [
+        o.kind for o in added
+        if type(o).__name__ == "ListingImage" and getattr(o, "status", None) == "uploaded"
+    ]
+
+
+def _cards_of(added):
+    return [o for o in added if str(getattr(o, "kind", "")).startswith("card_")]
+
+
+class TestBenefitCardsIntegration:
+    @pytest.mark.asyncio
+    async def test_three_cards_are_appended_after_the_individual_images(self):
+        """Cards entram depois das individuais, na ordem de CARD_KINDS."""
+        from app.services.image_card_copy_service import CARD_KINDS
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        attributes = [MagicMock()]
+        mock_db, added = _make_cards_db(attributes)
+        listing = _make_listing()
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=None,
+        ), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=_card_copies(*CARD_KINDS),
+        ) as mock_copy, patch(
+            "app.services.image_benefit_card_service.render_benefit_card",
+            side_effect=[b"card-a", b"card-b", b"card-c"],
+        ) as mock_render, patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"v1", b"v2"])
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=["pic1", "pic2", "card1", "card2", "card3"]
+            )
+            saved = await _try_i2i_generation(mock_db, listing, MagicMock(), "token")
+
+        assert saved == 5, "2 individuais + 3 cards"
+        assert _uploaded_kinds(added) == [
+            "individual", "individual", "card_benefits", "card_usage", "card_specs",
+        ]
+
+        cards = _cards_of(added)
+        assert [o.sort_order for o in cards] == [2, 3, 4], "contiguo apos as individuais"
+        assert all(o.source_sku == "SKU0001" for o in cards)
+        assert [o.ml_picture_id for o in cards] == ["card1", "card2", "card3"]
+
+        # Atributos vem da query propria, nunca do relacionamento lazy.
+        mock_copy.assert_awaited_once_with(listing, attributes)
+        # A foto-base dos 3 cards e a 1a individual aprovada.
+        assert [c.args[0] for c in mock_render.call_args_list] == [b"v1", b"v1", b"v1"]
+
+    @pytest.mark.asyncio
+    async def test_one_failing_card_does_not_take_down_the_others(self):
+        """Render explode no 2o card: sobram 2 cards e as individuais intactas."""
+        from app.services.image_benefit_card_service import CardRenderError
+        from app.services.image_card_copy_service import CARD_KINDS
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added = _make_cards_db()
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=None,
+        ), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=_card_copies(*CARD_KINDS),
+        ), patch(
+            "app.services.image_benefit_card_service.render_benefit_card",
+            side_effect=[b"card-a", CardRenderError("foto base ilegivel"), b"card-c"],
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"v1", b"v2"])
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=["pic1", "pic2", "card1", "card3"]
+            )
+            saved = await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        assert saved == 4, "2 individuais + os 2 cards que sobraram"
+        assert _uploaded_kinds(added) == [
+            "individual", "individual", "card_benefits", "card_specs",
+        ]
+
+        cards = _cards_of(added)
+        assert [o.sort_order for o in cards] == [2, 3], "sort_order segue contiguo apos a falha"
+        assert [o.source_sku for o in cards] == ["SKU0001", "SKU0001"]
+
+    @pytest.mark.asyncio
+    async def test_no_cards_when_no_individual_image_was_saved(self):
+        """Sem foto-base nao ha card — e o LLM nem chega a ser chamado."""
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added = _make_cards_db()
+
+        def _reject_all(image_bytes, requires_white_bg):
+            return None, ImageValidationResult(is_valid=False, errors=["reprovada no QA"])
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_reject_all,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=None,
+        ), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=_card_copies("card_benefits"),
+        ) as mock_copy, patch(
+            "app.services.image_benefit_card_service.render_benefit_card"
+        ) as mock_render, patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"v1", b"v2"])
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="nunca")
+            saved = await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        assert saved == 0
+        mock_copy.assert_not_awaited()
+        mock_render.assert_not_called()
+        assert _cards_of(added) == []
+
+    @pytest.mark.asyncio
+    async def test_kit_with_two_skus_gets_no_cards(self):
+        """Kit (N>1) segue fora de escopo, igual as demais features de 1 SKU."""
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added = _make_cards_db()
+
+        with patch(
+            "app.services.seller_image_source_service.resolve_listing_skus",
+            new_callable=AsyncMock,
+            return_value=["SKU0001", "SKU0002"],
+        ), patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"a1"], "SKU0002": [b"b1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=_card_copies("card_benefits"),
+        ) as mock_copy, patch(
+            "app.services.image_benefit_card_service.render_benefit_card"
+        ) as mock_render, patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"v1"])
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=[f"pic{i}" for i in range(20)]
+            )
+            saved = await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        # 1 capa composta + 1 individual por SKU = 3, e nenhum card.
+        assert saved == 3
+        mock_copy.assert_not_awaited()
+        mock_render.assert_not_called()
+        assert _cards_of(added) == []
+
+    @pytest.mark.asyncio
+    async def test_empty_copy_leaves_the_product_images_untouched(self):
+        """Copy vazia (LLM fora do ar): zero cards, imagens de produto intactas."""
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added = _make_cards_db()
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=None,
+        ), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=[],
+        ), patch(
+            "app.services.image_benefit_card_service.render_benefit_card"
+        ) as mock_render, patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"v1", b"v2"])
+            mock_ml_cls.return_value.upload = AsyncMock(side_effect=["pic1", "pic2"])
+            saved = await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        assert saved == 2, "so as individuais"
+        mock_render.assert_not_called()
+        assert _uploaded_kinds(added) == ["individual", "individual"]
+
+
+class TestBenefitCardsLogging:
+    """Os cards sao engolidos de proposito (nunca derrubam o anuncio), entao
+    estes logs sao o UNICO sinal de producao de que pararam de sair. Sem
+    traceback nao da pra separar falha de render, de QA, de upload ou de db —
+    por isso o `exc_info` e testado, nao so a mensagem."""
+
+    @pytest.mark.asyncio
+    async def test_falha_global_loga_com_traceback(self, caplog):
+        import logging
+
+        from app.workers.tasks.image_tasks import _append_benefit_cards
+
+        mock_db, _added = _make_cards_db()
+
+        with caplog.at_level(logging.WARNING, logger="app.workers.tasks.image_tasks"), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("provider caiu"),
+        ):
+            saved = await _append_benefit_cards(
+                mock_db, _make_listing(), "token",
+                base_photo=b"foto", source_sku="SKU0001", start_sort_order=2,
+            )
+
+        assert saved == 0
+        rec = next(r for r in caplog.records if "result=failed" in r.getMessage())
+        assert rec.exc_info is not None
+        assert rec.exc_info[0] is RuntimeError
+
+    @pytest.mark.asyncio
+    async def test_falha_de_um_card_loga_com_traceback(self, caplog):
+        import logging
+
+        from app.workers.tasks.image_tasks import _append_benefit_cards
+
+        mock_db, _added = _make_cards_db()
+
+        with caplog.at_level(logging.WARNING, logger="app.workers.tasks.image_tasks"), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=_card_copies("card_benefits"),
+        ), patch(
+            "app.services.image_benefit_card_service.render_benefit_card",
+            side_effect=ValueError("render quebrou"),
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ):
+            saved = await _append_benefit_cards(
+                mock_db, _make_listing(), "token",
+                base_photo=b"foto", source_sku="SKU0001", start_sort_order=2,
+            )
+
+        assert saved == 0
+        rec = next(r for r in caplog.records if "kind=card_benefits" in r.getMessage())
+        assert rec.exc_info is not None
+        assert rec.exc_info[0] is ValueError

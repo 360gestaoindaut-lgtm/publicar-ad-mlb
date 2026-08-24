@@ -483,6 +483,10 @@ class TestUploadSkipsInvalidImages:
         mock_db, added, listing = _make_i2i_mocks()
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.fetch_all_raw_photos",
             new_callable=AsyncMock,
             return_value={"SKU0001": [b"raw1"]},
@@ -518,6 +522,10 @@ class TestUploadSkipsInvalidImages:
         mock_db, added, listing = _make_i2i_mocks()
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.fetch_all_raw_photos",
             new_callable=AsyncMock,
             return_value={"SKU0001": [b"raw1"]},
@@ -548,6 +556,10 @@ class TestUploadSkipsInvalidImages:
         colored = _png(1200, 1200, color=(200, 90, 40))
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.fetch_all_raw_photos",
             new_callable=AsyncMock,
             return_value={"SKU0001": [b"raw1"]},
@@ -578,6 +590,10 @@ class TestUploadSkipsInvalidImages:
         mock_db, added, listing = _make_i2i_mocks()
 
         with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
             "app.services.seller_image_source_service.fetch_all_raw_photos",
             new_callable=AsyncMock,
             return_value={"SKU0001": [b"raw1"]},
