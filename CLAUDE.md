@@ -32,7 +32,13 @@ Sistema web para automação de criação e publicação de anúncios no Mercado
 | SPEC-011 | ✅ | Listing upload refatorado: planilha de anúncios só tem campos de publicação; dados do produto vêm do catálogo |
 | Quick fixes F-1..F-4 | ✅ | Resiliência do pipeline de imagens: ensure_dimensions seguro, _mark_failed robusto, ImageRateLimitError + backoff 429 |
 | SPEC-012 | ✅ | Resiliência estrutural do pipeline de imagens (token refresh, idempotência, Celery chain, lock otimista) |
+| Trilha 2 · Fase 3 | ✅ | Cards de benefício: 3 imagens extras por anúncio (benefícios / modo de uso / especificações) montadas com Pillow sobre foto já gerada, texto por LLM, sem motor de IA de imagem |
 | Fase 6 | 🔲 | Deploy produção (Railway + Vercel) + rotação de credenciais |
+
+> **Atenção à numeração:** "Fase 3" aparece duas vezes. A da linha de cima
+> (pipeline de imagens) é da trilha original; a **Trilha 2** é a de qualidade
+> de imagem, iniciada depois (`qa-imagens-fase1` → `capa-deterministica-fase2`
+> → `cards-beneficio-fase3`). Ao falar de "Fase 3", diga de qual trilha.
 
 ---
 
@@ -199,6 +205,15 @@ Nos endpoints, usa-se `Depends(get_db)` de `app.core.dependencies`.
 ### Lazy loading de relacionamentos
 Nunca passar um objeto ORM com relacionamentos lazy direto para `Model.model_validate()` — causa `MissingGreenlet`. Sempre carregar os relacionamentos com queries separadas.
 
+### Provider de IA — 4 métodos abstratos
+`AIProvider` (`ai/base.py`) declara `generate_titles`, `generate_description`,
+`generate_image_prompt` e `generate_card_copy`. **Provider novo tem que
+implementar os 4** — faltar um faz a classe estourar `TypeError` na
+instanciação. Os prompts ficam centralizados em `ai/prompts.py` como
+`build_*_prompt()`; `gemini.py` e `claude.py` compartilham a mesma assinatura
+`_call(prompt, max_tokens, temperature)`, e `claude.py` reusa `_extract_json`
+de `gemini.py` em vez de duplicar.
+
 ### Bcrypt
 Usa `bcrypt` diretamente, sem `passlib` (incompatível com bcrypt 4.x).
 Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
@@ -240,6 +255,9 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 - `product_image.py` — ProductImage (seller_id, sku, ml_picture_id, is_approved) — índice SKU→imagem
 - `batch_import.py` — BatchImport + BatchImportRow
 
+### backend/app/assets/fonts/
+- `Inter-Regular.ttf` (peso 400), `Inter-Bold.ttf` (peso 700), `OFL.txt` — fonte do renderizador de cards. Versionadas no repo de propósito: a imagem `python:3.12-slim` **não traz nenhuma TTF** e o Pillow só embarca fonte bitmap, então sem isso `ImageFont.truetype()` não tem o que carregar. Licença SIL OFL, uso comercial livre.
+
 ### backend/app/services/
 - `auth_service.py` — login, refresh token
 - `ml_oauth_service.py` — OAuth ML, troca code→token, refresh token ML
@@ -251,6 +269,8 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 - `product_service.py` — ProductService (multi-tenant via `_base_query()`): list, get, create, update, upsert
 - `product_import_service.py` — parser CSV/XLSX de produtos (auto-detect delimitador)
 - `batch_import_service.py` — parser CSV/XLSX de anúncios (auto-detect delimitador)
+- `image_card_copy_service.py` — copy dos cards via LLM: `CARD_KINDS`, `CardCopy`, `generate_card_copy()`. **Nunca levanta exceção** — devolve `[]` em falha e descarta ângulo inutilizável. Sanitiza sem confiar no LLM: trunca título em 40 e bullets em 50 chars, exige 2–3 bullets, e roda uma **denylist de conteúdo proibido pelo ML** (preço, URL, telefone, frete grátis, superlativo) no texto **cru, antes de truncar** — truncar o preço para fora não pode servir de lavagem
+- `image_benefit_card_service.py` — renderizador Pillow: `render_benefit_card()` → JPEG 1200×1200, `CardRenderError`. Foto em contain-fit na faixa y=0..640, bloco de texto centralizado em y=700..1110 com clamp que impede desenho fora do canvas (descarta o último bullet se não couber)
 
 ### backend/app/api/v1/endpoints/
 - `health.py`, `auth.py`, `listings.py`
@@ -260,14 +280,29 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 ### backend/app/workers/tasks/
 - `ai_tasks.py` — `generate_title`, `generate_description`
 - `category_tasks.py` — `predict_category` (batch: atomic UPDATE + Celery chain se sem attrs pendentes)
-- `image_tasks.py` — `generate_images` (`_fetch_upload_token` para refresh automático de token ML; guard de idempotência; reutiliza imagens via ProductImage; `ensure_dimensions` antes do upload)
+- `image_tasks.py` — `generate_images` (`_fetch_upload_token` para refresh automático de token ML; guard de idempotência; reutiliza imagens via ProductImage; `ensure_dimensions` antes do upload) + `_append_benefit_cards` (3 cards depois das individuais; só para 1 SKU e só se ao menos 1 individual foi salva; nunca levanta — falha vira log e zero cards)
 - `publish_tasks.py` — `publish_listing` (MLValidationError → failed sem retry)
 - `batch_tasks.py` — `process_batch` (lê planilha, cria listings, dispara pipeline)
 
 ### backend/tests/
+> **`conftest.py` bloqueia a rede em toda a suíte.** Fixture autouse que faz
+> qualquer egresso HTTP real levantar `NetworkAccessAttempted` nomeando a URL.
+> O patch é na camada de **transporte** do httpx (`AsyncHTTPTransport.handle_async_request`
+> / `HTTPTransport.handle_request`) e no `botocore`, **não** no `AsyncClient` —
+> por isso `ASGITransport` (usado em `test_health.py`) e `MockTransport` seguem
+> funcionando. Escape hatch: `@pytest.mark.allow_network`. Se um teste novo
+> esquecer de mockar o provider de IA, ele falha em alto e bom som em vez de
+> gastar chamada paga.
+
 - `test_image_service.py` — `TestEnsureDimensions` (5 casos), `TestGeminiImageService429` (2 casos)
 - `test_image_tasks.py` — `TestMarkFailed` (4), `TestGenerateImagesRateLimit` (2), `TestFetchUploadToken` (2), `TestGenerateImagesIdempotency` (2)
 - `test_batch_chain.py` — `TestCategoryTaskChainDispatch` (3), `TestSubmitAttributesChainDispatch` (1), `TestRemovedInternalDispatch` (2)
+- `test_image_card_copy_service.py` — saneamento da copy, denylist de conteúdo (true positives + **13 casos de falso positivo**: `12V`, `3,5cm`, `500ml`, `12,50 m`, `99,9%`, `5000mAh`…)
+- `test_image_benefit_card_service.py` — geometria do card. Os testes de layout aferem a geometria **calculada de forma independente** das constantes, mais um caso pixel-level que garante que nada é desenhado abaixo de y=1112
+- `test_image_tasks_i2i.py` — `TestBenefitCardsIntegration`: ordem dos 3 cards, `sort_order` contíguo, falha de 1 card não derruba os outros, nenhum card sem individual salva, kit não gera card
+
+> Suíte completa: **248 passed**. Os 2 warnings (`coroutine '_generate_images_async'
+> was never awaited`) são pré-existentes em `test_image_tasks.py`.
 
 ### Migrations aplicadas (ordem cronológica)
 - `a7519acf4e00` — schema inicial (8 tabelas)
@@ -300,6 +335,31 @@ draft
 Em qualquer estado: falha ──► failed ──(retry)──► generating_title
 MLValidationError (400 do ML) ──► failed (sem retry automático)
 ```
+
+---
+
+## Ordem das imagens do anúncio
+
+`sort_order` no caminho image-to-image, 1 SKU:
+
+| # | `kind` | Origem |
+|---|---|---|
+| 0 | `cover_deterministic` | recorte por distância de cor, sem custo de IA — só quando a foto bruta tem fundo uniforme |
+| 1..n | `individual` | edição i2i da foto bruta do seller (2 variantes por foto) |
+| n+1 | `card_benefits` | Pillow + copy LLM |
+| n+2 | `card_usage` | Pillow + copy LLM |
+| n+3 | `card_specs` | Pillow + copy LLM |
+
+Se a capa determinística falhar, tudo desloca uma posição para trás e a 1ª
+individual assume o `sort_order` 0. **Cards nunca ocupam a posição 0** — o ML
+não aceita texto/infográfico na capa, só da 2ª imagem em diante.
+
+> **Gap conhecido:** cards **não** gravam linha em `ProductImage`, porque a copy
+> é derivada do `selected_title` e dos atributos *daquele* anúncio — reusar em
+> outro anúncio do mesmo SKU publicaria texto errado. Consequência: um segundo
+> anúncio do mesmo SKU que caia no caminho de reuso por `ProductImage` recebe
+> as fotos reusadas e **nenhum card**. É o comportamento padrão para SKU
+> repetido, não um caso raro. Decisão de produto em aberto.
 
 ---
 
