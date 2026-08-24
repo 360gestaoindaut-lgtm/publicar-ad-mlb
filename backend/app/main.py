@@ -12,6 +12,11 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs" if settings.environment == "development" else None,
     redoc_url=None,
+    # Fechar so o /docs nao basta: sem isto o schema OpenAPI continua servido
+    # em /openapi.json, e ele documenta todos os endpoints — inclusive os de
+    # auth — com parametros e modelos. Qualquer Swagger UI apontado para o
+    # arquivo navega a API inteira, tornando o /docs desligado inofensivo.
+    openapi_url="/openapi.json" if settings.environment == "development" else None,
 )
 
 app.add_middleware(

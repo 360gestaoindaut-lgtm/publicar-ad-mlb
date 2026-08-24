@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     r2_public_url: str = ""
 
     # App
+    #
+    # ATENCAO — este default e INSEGURO por design, e o risco so aparece por
+    # omissao: `main.py` publica o Swagger (`/docs`) enquanto o valor for
+    # "development". Como esse e justamente o default, QUALQUER ambiente que
+    # esqueca de setar a variavel sobe com a documentacao inteira da API
+    # aberta — inclusive uma VPS exposta a internet.
+    #
+    # Todo ambiente que nao for dev explicito precisa setar
+    # ENVIRONMENT=production. O `docker-compose.prod.yml` ja crava o valor na
+    # secao `environment:` do backend, worker e beat, justamente para nao
+    # depender do .env daquele servidor estar completo.
     environment: str = "development"
     log_level: str = "INFO"
     allowed_origins: list[str] = ["http://localhost:3000"]

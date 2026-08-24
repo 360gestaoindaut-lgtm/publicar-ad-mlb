@@ -1,0 +1,44 @@
+# Contexto de build da imagem do backend.
+#
+# O `.env` real vive na RAIZ do repo, fora deste contexto (`./backend`), entao
+# hoje ele ja nao entraria na imagem. As linhas abaixo sao cinto de seguranca
+# para o dia em que alguem trocar o context para `.` sem perceber que isso
+# passaria a assar o segredo dentro da imagem.
+.env
+.env.*
+!.env.example
+
+# Artefatos de runtime do Celery beat. O schedule e estado de execucao, nao
+# codigo: assar um schedule velho na imagem faz o beat do primeiro boot
+# acreditar em horarios que nunca aconteceram naquele ambiente.
+celerybeat-schedule
+celerybeat.pid
+
+# Bytecode e caches — sao regerados no destino e podem estar compilados para
+# outra arquitetura/versao que nao a da imagem.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Ambientes virtuais locais: pesados e inuteis dentro do container, que tem o
+# venv proprio em /opt/venv.
+.venv/
+venv/
+ENV/
+
+# Metadados de repositorio e de build.
+.git/
+.gitignore
+Dockerfile
+Dockerfile.*
+.dockerignore
+
+# Logs e banco local
+*.log
+*.sqlite3
+
+# NAO ignorar `tests/`: a imagem de producao carrega a suite de proposito,
+# para servir de diagnostico pos-deploy (`docker compose exec backend pytest -q`).

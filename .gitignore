@@ -68,3 +68,7 @@ backend/alembic/versions/*.pyc
 logs/
 *.xlsx
 *.csv
+
+# Artefato de runtime do Celery beat (estado, nao codigo)
+celerybeat-schedule
+celerybeat.pid
