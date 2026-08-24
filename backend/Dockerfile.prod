@@ -1,0 +1,66 @@
+# Imagem de producao do backend.
+#
+# Build multi-stage: o estagio `builder` carrega o toolchain de compilacao
+# (gcc, headers de ssl/ffi) necessario para qualquer dependencia que nao tenha
+# wheel pronta; o estagio final recebe so o virtualenv resultante. O toolchain
+# nao chega na imagem que roda em producao — menos peso e menos superficie.
+#
+# Servidor: uvicorn direto, sem gunicorn. O ganho do gunicorn seria supervisao
+# de processo e reciclagem de worker por `--max-requests` (mitigacao de
+# memoria crescente), mas aqui a supervisao ja e do Docker (`restart:
+# unless-stopped`) e o processamento pesado — Pillow, upload de imagem — roda
+# nos workers Celery, nao na API. O processo FastAPI so fala com Postgres,
+# Redis e enfileira task.
+# Se um dia o render de imagem migrar para dentro do request, essa decisao se
+# inverte e o gunicorn passa a valer a dependencia extra.
+
+# ─────────────────────────── Estagio 1: build ───────────────────────────
+FROM python:3.12-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libffi-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# O venv em /opt/venv e o unico artefato que atravessa para o estagio final.
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /build
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+# ────────────────────────── Estagio 2: runtime ──────────────────────────
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+# Usuario non-root fixo. UID alto e explicito para nao colidir com usuarios do
+# host caso algum volume venha a ser montado com mapeamento de UID.
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+# Codigo DENTRO da imagem: producao nao pressupoe bind mount nenhum. O que
+# entra aqui e o que roda.
+COPY --chown=appuser:appuser . .
+
+# Diretorio gravavel para o schedule do Celery beat. Sem isto o beat tenta
+# escrever em /app, que pertence ao root, e morre no boot ao rodar non-root.
+RUN mkdir -p /home/appuser/celerybeat && chown -R appuser:appuser /home/appuser
+
+USER appuser
+
+EXPOSE 8000
+
+# 2 workers: a API e leve (I/O bound) e divide a VPS com os workers Celery,
+# que sao os famintos de CPU e memoria. Para mudar, sobrescreva `command:` no
+# compose em vez de reconstruir a imagem.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
