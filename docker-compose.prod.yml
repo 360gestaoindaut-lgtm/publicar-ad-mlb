@@ -19,6 +19,18 @@
 # Na VPS isso e inofensivo (nao ha stack de dev la), mas o habito evita o
 # acidente aqui.
 #
+# TETO DE MEMORIA — por que cada servico tem `mem_limit`:
+# A VPS de destino tem 2 vCPU, 7.8Gi de RAM e ZERO swap, e ja divide a maquina
+# com Postgres do host, MariaDB e o app de etiquetas de outro cliente. Sem
+# swap, estourar a memoria nao degrada: o OOM killer do kernel escolhe uma
+# vitima na hora, e ela pode ser o processo do vizinho, nao o nosso. O
+# `mem_limit` transforma "derrubei o app de outro cliente" em "meu container
+# reiniciou", que e uma falha nossa, contida e visivel.
+#
+# Os valores saem de medicao real dos containers ociosos (backend 141MiB,
+# worker 131MiB, beat 42MiB, postgres 39MiB, redis 12MiB), com folga para o
+# pico. Teto somado: 2.4Gi, deixando ~3.8Gi livres na VPS.
+#
 # Subir:
 #   docker compose -f docker-compose.prod.yml up -d --build
 # Migrations (passo manual e deliberado, nunca automatico no boot):
@@ -38,6 +50,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data_prod:/var/lib/postgresql/data
+    # 512M: medicao ociosa deu 39MiB, mas o teto real e o `shared_buffers`
+    # (128MB no default do postgres:16) somado a work_mem por conexao. 512M
+    # cobre o default com folga sem reservar RAM que a VPS nao tem sobrando.
+    mem_limit: 512m
     # Sem `ports:` de proposito. O `ufw` NAO filtra portas publicadas via
     # Docker: publicar 5432 aqui exporia o banco na internet mesmo com o
     # firewall fechado. Os outros servicos alcancam pelo DNS interno do
@@ -55,6 +71,12 @@ services:
     command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
     volumes:
       - redis_data_prod:/data
+    # 256M. ATENCAO: o redis aqui nao tem `maxmemory` configurado, entao ele
+    # cresce ate o teto do container e ai e morto pelo OOM — levando a fila do
+    # Celery junto. Com `result_expires=86400` os resultados ficam 24h na
+    # memoria. 256M e folgado para o volume atual, mas se a fila crescer, o
+    # certo e configurar `maxmemory` no redis, nao so subir este numero.
+    mem_limit: 256m
     # Sem `ports:` — mesma razao do postgres.
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
@@ -76,6 +98,9 @@ services:
     # 5433, 6379, 3000, 5050.
     ports:
       - "127.0.0.1:8010:8000"
+    # 512M para os 2 workers uvicorn. Medicao ociosa: 141MiB com 1 processo.
+    # A API e leve — nao processa imagem, so fala com banco/Redis e enfileira.
+    mem_limit: 512m
     env_file:
       - .env
     environment:
@@ -98,6 +123,12 @@ services:
       context: ./backend
       dockerfile: Dockerfile.prod
     restart: unless-stopped
+    # 1G — o teto mais alto da stack, e o unico servico que merece. E aqui que
+    # o Pillow abre imagem: uma 1200x1200 RGB sao ~4.3MB de pixel cru, e o
+    # pipeline mantem varias copias vivas ao mesmo tempo (foto bruta baixada,
+    # variante do motor, normalizada, card renderizado), vezes a concorrencia.
+    # Medicao ociosa foi 131MiB; o resto e folga para o pico.
+    mem_limit: 1g
     # Sem `ports:` — worker nao atende ninguem de fora, so consome fila.
     env_file:
       - .env
@@ -110,7 +141,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4 -Q default,images,ai,publish
+    # concurrency=2 casado com os 2 vCPU da VPS. Estava 4, herdado do compose
+    # de dev, onde nao havia vizinho para prejudicar. Em 2 vCPU, 4 workers de
+    # imagem so aumentam troca de contexto e pico de memoria sem entregar mais
+    # vazao — o gargalo e CPU/IO, nao numero de processos.
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 -Q default,images,ai,publish
 
   # ── Celery Beat (agendador) ──────────────────────────────
   # ATENCAO: `celery_app.py` nao define `beat_schedule` nenhum hoje — nao ha
@@ -122,6 +157,10 @@ services:
       context: ./backend
       dockerfile: Dockerfile.prod
     restart: unless-stopped
+    # 128M: medicao ociosa deu 42MiB e o beat nao tem tarefa nenhuma hoje —
+    # so carrega o app Celery e dorme. Teto baixo de proposito: se este
+    # container crescer, e sintoma de bug, nao de carga.
+    mem_limit: 128m
     # Sem `ports:`.
     env_file:
       - .env
