@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     r2_bucket_name: str = "publicar-ad-mlb"
     r2_public_url: str = ""
 
+    # URL do frontend. Vazia enquanto nao houver frontend em producao: nesse
+    # caso o callback do OAuth devolve JSON em vez de redirecionar para uma
+    # tela que nao existe. Quando o frontend subir, basta definir a variavel.
+    frontend_url: str = ""
+
     # App
     #
     # ATENCAO — este default e INSEGURO por design, e o risco so aparece por

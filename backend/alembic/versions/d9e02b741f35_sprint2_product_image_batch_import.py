@@ -1,3 +1,4 @@
+
 """sprint2_product_image_batch_import
 
 Revision ID: d9e02b741f35
