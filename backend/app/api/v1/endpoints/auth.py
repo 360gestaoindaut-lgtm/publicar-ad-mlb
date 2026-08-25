@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.config import get_settings
 from app.core.dependencies import get_db, get_current_user
 from app.schemas.auth import LoginRequest, RefreshRequest, TokenResponse
 from app.services.auth_service import AuthService
@@ -21,11 +22,24 @@ async def refresh_token(request: RefreshRequest, db: AsyncSession = Depends(get_
 
 @router.get("/ml/connect")
 async def ml_connect(current_user=Depends(get_current_user)):
-    auth_url = MLOAuthService().get_authorization_url(user_id=str(current_user.id))
+    auth_url = await MLOAuthService().get_authorization_url(user_id=str(current_user.id))
     return {"auth_url": auth_url}
 
 
 @router.get("/ml/callback")
 async def ml_callback(code: str, state: str, db: AsyncSession = Depends(get_db)):
+    """Callback do OAuth do Mercado Livre.
+
+    Sem frontend configurado, devolve JSON: redirecionar para uma tela que nao
+    existe transformaria uma conexao bem-sucedida num erro de navegador. Com
+    `FRONTEND_URL` definida, volta a redirecionar — o terreno ja fica pronto
+    para quando o frontend entrar, sem quebrar o caminho de hoje.
+    """
     await MLOAuthService().handle_callback(code, state, db)
-    return RedirectResponse(url="http://localhost:3000/settings?ml_connected=true")
+
+    frontend_url = get_settings().frontend_url
+    if frontend_url:
+        return RedirectResponse(
+            url=f"{frontend_url.rstrip('/')}/settings?ml_connected=true"
+        )
+    return {"status": "connected"}
