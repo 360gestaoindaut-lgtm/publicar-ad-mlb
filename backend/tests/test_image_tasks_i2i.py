@@ -804,3 +804,161 @@ class TestBenefitCardsLogging:
         rec = next(r for r in caplog.records if "kind=card_benefits" in r.getMessage())
         assert rec.exc_info is not None
         assert rec.exc_info[0] is ValueError
+
+
+class TestCardsUsamCapaDeterministicaComoBase:
+    """A base dos cards e a capa deterministica quando ela existe.
+
+    Motivo: o motor i2i altera texto impresso no rotulo de forma estocastica.
+    Num teste real o frasco de 100ml virou "160ml" nas individuais, e os 3
+    cards herdaram o erro por usarem a primeira individual como base. A capa
+    deterministica e recorte do pixel original, sem IA — o rotulo nela e fiel.
+    """
+
+    @pytest.mark.asyncio
+    async def test_com_capa_deterministica_os_cards_usam_a_capa(self):
+        from app.services.image_card_copy_service import CARD_KINDS
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added = _make_cards_db([MagicMock()])
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=b"capa-deterministica",
+        ), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=_card_copies(*CARD_KINDS),
+        ), patch(
+            "app.services.image_benefit_card_service.render_benefit_card",
+            side_effect=[b"card-a", b"card-b", b"card-c"],
+        ) as mock_render, patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"ind-1", b"ind-2"])
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=["capa", "pic1", "pic2", "c1", "c2", "c3"]
+            )
+            saved = await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        assert saved == 6, "1 capa + 2 individuais + 3 cards"
+        assert _uploaded_kinds(added) == [
+            "cover_deterministic", "individual", "individual",
+            "card_benefits", "card_usage", "card_specs",
+        ]
+
+        # O ponto do teste: os 3 renders receberam a CAPA, nao a individual.
+        bases = [c.args[0] for c in mock_render.call_args_list]
+        assert bases == [b"capa-deterministica"] * 3, (
+            "os cards precisam sair da capa deterministica, nao de uma imagem "
+            "de IA que ninguem verificou"
+        )
+        assert b"ind-1" not in bases and b"ind-2" not in bases
+
+    @pytest.mark.asyncio
+    async def test_sem_capa_deterministica_cai_para_a_primeira_individual(self):
+        """Fallback preservado: foto bruta com fundo texturizado nao gera capa."""
+        from app.services.image_card_copy_service import CARD_KINDS
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, added = _make_cards_db([MagicMock()])
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=None,
+        ), patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=_card_copies(*CARD_KINDS),
+        ), patch(
+            "app.services.image_benefit_card_service.render_benefit_card",
+            side_effect=[b"card-a", b"card-b", b"card-c"],
+        ) as mock_render, patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"ind-1", b"ind-2"])
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=["pic1", "pic2", "c1", "c2", "c3"]
+            )
+            saved = await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        assert saved == 5, "2 individuais + 3 cards, sem capa"
+        assert "cover_deterministic" not in _uploaded_kinds(added)
+        bases = [c.args[0] for c in mock_render.call_args_list]
+        assert bases == [b"ind-1"] * 3, "sem capa, a base volta a ser a 1a individual"
+
+
+class TestPromptProibeAlterarTexto:
+    """A regra anti-alteracao de texto tem que estar nos dois prompts do i2i.
+
+    Nao da para testar o COMPORTAMENTO do modelo com fixture sintetica — isso
+    e do modelo, nao da nossa logica. O que da para travar e que a instrucao
+    nao suma do prompt numa refatoracao futura.
+    """
+
+    @pytest.mark.asyncio
+    async def test_prompt_das_individuais_proibe_alterar_texto(self):
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_db, _ = _make_cards_db([])
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value={"SKU0001": [b"raw1"]},
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=None,
+        ), patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"v1"])
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic1")
+            await _try_i2i_generation(mock_db, _make_listing(), MagicMock(), "token")
+
+        prompt = mock_engine_cls.return_value.edit.await_args.kwargs["prompt"]
+        assert "CRITICAL" in prompt
+        for termo in ("do not alter", "volumes", "measurement units", "character for character"):
+            assert termo in prompt, f"prompt perdeu a instrucao: {termo}"
+        # A contradicao antiga: "no text" pedia remover texto enquanto o resto
+        # pedia preservar o produto. Agora e "no text overlay".
+        assert "no text overlay" in prompt
