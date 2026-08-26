@@ -12,7 +12,7 @@ Sistema web para automação de criação e publicação de anúncios no Mercado
 | Frontend | Next.js 14 (App Router) + TypeScript + Tailwind + shadcn/ui |
 | Storage de imagens | Cloudflare R2 (URL pública funciona; API S3 bloqueada pelo ISP) |
 | Infra local | Docker Compose |
-| Infra produção | Railway (backend) + Vercel (frontend) — ainda não deployado |
+| Infra produção | **VPS própria** (`vps-360`, Ubuntu 24.04) + Docker Compose + Nginx como proxy reverso + Let's Encrypt. Backend **no ar** em `https://app.360ecomm.com.br` |
 
 ---
 
@@ -33,7 +33,12 @@ Sistema web para automação de criação e publicação de anúncios no Mercado
 | Quick fixes F-1..F-4 | ✅ | Resiliência do pipeline de imagens: ensure_dimensions seguro, _mark_failed robusto, ImageRateLimitError + backoff 429 |
 | SPEC-012 | ✅ | Resiliência estrutural do pipeline de imagens (token refresh, idempotência, Celery chain, lock otimista) |
 | Trilha 2 · Fase 3 | ✅ | Cards de benefício: 3 imagens extras por anúncio (benefícios / modo de uso / especificações) montadas com Pillow sobre foto já gerada, texto por LLM, sem motor de IA de imagem |
-| Fase 6 | 🔲 | Deploy produção (Railway + Vercel) + rotação de credenciais |
+| Fase 5a | ✅ | Artefatos de produção: `Dockerfile.prod` multi-stage non-root, `docker-compose.prod.yml`, `.dockerignore`, limites de memória. Correção de segurança: `/openapi.json` fechado fora de development |
+| Fase 5b | ✅ | Deploy na VPS: vhost + TLS, `.env` de produção gerado do zero, stack no ar, migrations aplicadas. Correção de 2 bugs de OAuth |
+| Fase 6 | 🔲 | Frontend em produção (Vercel ou na própria VPS) + teste do pipeline com SKU real |
+
+> **Railway e Vercel foram descartados para o backend.** A escolha final foi
+> VPS própria, que já hospedava outros apps da 360.
 
 > **Atenção à numeração:** "Fase 3" aparece duas vezes. A da linha de cima
 > (pipeline de imagens) é da trilha original; a **Trilha 2** é a de qualidade
@@ -83,6 +88,43 @@ cd frontend && npm run build  # checar erros TS
 
 ---
 
+## Produção (VPS)
+
+| Item | Valor |
+|---|---|
+| Domínio | `https://app.360ecomm.com.br` (Cloudflare, **DNS only** — proxy laranja ainda não ativado) |
+| Acesso | alias SSH `vps-360` (ver `CLAUDE.md` global para as regras de SSH) |
+| Diretório do projeto | `/root/publicar-ad-mlb` (fora de qualquer `root` do Nginx) |
+| `.env` de produção | `/root/publicar-ad-mlb/.env`, `600 root:root` — gerado do zero, nada copiado do dev |
+| Porta interna | `127.0.0.1:8010` → 8000 no container. **Só loopback**; quem fala com ela é o Nginx |
+| Vhost | `/etc/nginx/sites-available/app.360ecomm.com.br` |
+| Certificado | Let's Encrypt via `certbot --nginx`, renovação pelo `certbot.timer` já existente |
+| Código | `git pull` via deploy key dedicada (alias SSH `github-admlb`) |
+
+```bash
+# Sempre com -p: o nome de projeto derivado do diretório colide com o de dev
+docker compose -p publicar-ad-mlb -f docker-compose.prod.yml up -d --build
+
+# Migrations — passo manual e deliberado, nunca automático no boot
+docker compose -p publicar-ad-mlb -f docker-compose.prod.yml run --rm backend alembic upgrade head
+
+# Diagnóstico pós-deploy: a suíte roda dentro da imagem de produção
+docker compose -p publicar-ad-mlb -f docker-compose.prod.yml exec backend pytest -q
+```
+
+> **`docker compose restart` NÃO relê o `env_file`.** As variáveis são fixadas na
+> criação do container. Depois de mudar o `.env`, use
+> `up -d --force-recreate <serviço>`. E confira o resultado **por hash**, não por
+> comprimento: dois segredos diferentes com o mesmo tamanho fazem a checagem por
+> comprimento passar com o valor velho carregado.
+
+> **Limites de memória são obrigatórios aqui.** A VPS tem 2 vCPU, 7.8Gi de RAM e
+> **zero swap**, dividida com o Postgres do host, MariaDB e o app de outro
+> cliente. Sem `mem_limit`, estourar memória faz o OOM killer escolher uma vítima
+> qualquer — possivelmente o processo do vizinho.
+
+---
+
 ## Variáveis de ambiente
 
 Copie `.env.example` para `.env`. NUNCA commite `.env`.
@@ -98,7 +140,24 @@ Chaves relevantes:
 - `ANTHROPIC_API_KEY` (se usar Claude como provider)
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL` — Cloudflare R2 (configurado mas não usado no pipeline de imagens atualmente)
 
+- `ENVIRONMENT` — **default inseguro**: enquanto o valor for `development`, o
+  `main.py` publica `/docs` **e** `/openapi.json`. Todo ambiente que não for dev
+  explícito precisa de `ENVIRONMENT=production`. O `docker-compose.prod.yml`
+  crava o valor nos 3 serviços para não depender do `.env` do servidor.
+- `FRONTEND_URL` — vazia por padrão. Vazia, o callback do OAuth devolve
+  `{"status": "connected"}`; preenchida, redireciona para
+  `<FRONTEND_URL>/settings?ml_connected=true`.
+- `ALLOWED_ORIGINS` — é `list[str]`, o pydantic-settings **só aceita JSON**.
+  `ALLOWED_ORIGINS=https://x` derruba o boot com `SettingsError`; a forma certa é
+  `ALLOWED_ORIGINS=["https://x"]`. Em produção está **omitida** de propósito.
+
 > `FREEPIK_API_KEY` não é mais necessário — FreePik foi descartado; imagens geradas pelo Gemini Imagen 4.
+
+> **`FERNET_KEY` NÃO pode vir de `openssl rand -hex 32`.** O `Fernet()` exige 32
+> bytes em **base64 url-safe** (44 chars). Pior: `_fernet` é construído em nível
+> de módulo em `app/core/security.py`, então chave inválida não falha na primeira
+> criptografia — derruba o import e põe o container em crash-loop. Gere com
+> `Fernet.generate_key()` ou `openssl rand 32 | base64 -w0 | tr '+/' '-_'`.
 
 ---
 
@@ -214,6 +273,23 @@ instanciação. Os prompts ficam centralizados em `ai/prompts.py` como
 `_call(prompt, max_tokens, temperature)`, e `claude.py` reusa `_extract_json`
 de `gemini.py` em vez de duplicar.
 
+### Nada de estado em memória de processo
+A API roda com `uvicorn --workers 2` em produção. Qualquer estado guardado em
+variável de módulo (dict, cache, contador) vive **num worker só**: uma
+requisição grava, a seguinte cai no outro processo e não encontra nada. Falha
+intermitente, sem erro no log.
+
+Foi exatamente o bug do state do OAuth (`ml_oauth_service.py`), que ficava num
+`dict` de módulo e quebrava o fluxo em ~metade das tentativas. Estado
+compartilhado vai para o **Redis**, que já é o broker do Celery:
+
+```python
+await client.setex(f"ml_oauth_state:{state}", 600, user_id)   # TTL sempre
+valor = await client.getdel(chave)   # atômico: impede replay
+```
+
+O TTL não é detalhe: sem ele, fluxo abandonado nunca é limpo.
+
 ### Bcrypt
 Usa `bcrypt` diretamente, sem `passlib` (incompatível com bcrypt 4.x).
 Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
@@ -254,6 +330,12 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 - `listing_job.py` — ListingJob
 - `product_image.py` — ProductImage (seller_id, sku, ml_picture_id, is_approved) — índice SKU→imagem
 - `batch_import.py` — BatchImport + BatchImportRow
+
+### Arquivos de produção (raiz e backend/)
+- `docker-compose.prod.yml` — stack de produção; `mem_limit` em todos os serviços, postgres/redis sem `ports:`, backend só em `127.0.0.1:8010`, sem pgadmin nem frontend
+- `backend/Dockerfile.prod` — multi-stage (toolchain fica no estágio de build), usuário non-root `appuser` uid 10001, uvicorn com 2 workers e sem `--reload`
+- `backend/.dockerignore` — exclui `.env` explicitamente, como rede de segurança caso o build context mude de `./backend` para `.`
+- `backend/pytest.ini` — `cache_dir = /tmp/pytest_cache`: `/app` pertence ao root e o processo roda como `appuser`. Dar `chown` em `/app` deixaria o código gravável pelo usuário de runtime, anulando metade do ganho do non-root
 
 ### backend/app/assets/fonts/
 - `Inter-Regular.ttf` (peso 400), `Inter-Bold.ttf` (peso 700), `OFL.txt` — fonte do renderizador de cards. Versionadas no repo de propósito: a imagem `python:3.12-slim` **não traz nenhuma TTF** e o Pillow só embarca fonte bitmap, então sem isso `ImageFont.truetype()` não tem o que carregar. Licença SIL OFL, uso comercial livre.
@@ -300,8 +382,9 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 - `test_image_card_copy_service.py` — saneamento da copy, denylist de conteúdo (true positives + **13 casos de falso positivo**: `12V`, `3,5cm`, `500ml`, `12,50 m`, `99,9%`, `5000mAh`…)
 - `test_image_benefit_card_service.py` — geometria do card. Os testes de layout aferem a geometria **calculada de forma independente** das constantes, mais um caso pixel-level que garante que nada é desenhado abaixo de y=1112
 - `test_image_tasks_i2i.py` — `TestBenefitCardsIntegration`: ordem dos 3 cards, `sort_order` contíguo, falha de 1 card não derruba os outros, nenhum card sem individual salva, kit não gera card
+- `test_ml_oauth_state.py` — state do OAuth no Redis (incluindo o cenário "inicia num worker, completa em outro") e destino pós-callback com/sem `FRONTEND_URL`
 
-> Suíte completa: **248 passed**. Os 2 warnings (`coroutine '_generate_images_async'
+> Suíte completa: **257 passed**. Os 2 warnings (`coroutine '_generate_images_async'
 > was never awaited`) são pré-existentes em `test_image_tasks.py`.
 
 ### Migrations aplicadas (ordem cronológica)
