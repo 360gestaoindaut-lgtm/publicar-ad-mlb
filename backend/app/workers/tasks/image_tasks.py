@@ -151,12 +151,33 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
     if raw_photos_by_sku is None:
         return None
 
+    # A clausula CRITICAL nao e enfeite. O prompt antigo pedia "same shape,
+    # color, materials and proportions" e nao dizia nada sobre TEXTO — e o
+    # motor tratou o rotulo como textura livre para redesenhar: num teste real
+    # o frasco de 100ml saiu marcado "160ml | 3.50 fl.ex", com a marca escrita
+    # "weoink" no lugar de "wepink". Volume e marca errados na vitrine sao
+    # informacao falsa sobre o produto, nao imperfeicao estetica.
+    #
+    # Isto e MITIGACAO, nao garantia: o comportamento e do modelo, e continua
+    # estocastico. O gate de revisao humana antes da aprovacao segue sendo a
+    # protecao real. Ver a limitacao registrada no commit.
+    _NO_TEXT_EDIT_RULE = (
+        "CRITICAL: do not alter, redraw, translate, correct or re-render ANY "
+        "text printed on the product or its packaging. Brand names, product "
+        "names, volumes, measurement units, ingredient lists and any other "
+        "lettering must be preserved exactly as they appear in the reference "
+        "image, character for character. If any text is unreadable, keep it "
+        "unreadable rather than inventing plausible text. Never change a "
+        "number or a unit of measurement. "
+    )
+
     treatment_prompt = (
         "Professional e-commerce product photo. Pure white background, "
-        "studio lighting, product centered and isolated, no text, no watermark, "
-        "no people. Keep the exact product from the reference image — same "
-        "shape, color, materials and proportions — only improve background, "
-        "lighting and framing."
+        "studio lighting, product centered and isolated, no text overlay, no "
+        "watermark, no people. Keep the exact product from the reference image "
+        "— same shape, color, materials and proportions. Only the background, "
+        "lighting and framing may change. "
+        + _NO_TEXT_EDIT_RULE
     )
 
     engine = OpenAIEditEngine()
@@ -176,7 +197,8 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
             "Professional e-commerce product photo showing all the items from "
             "the reference images together, composed in a single realistic scene. "
             "Pure white background, studio lighting, items clearly visible and "
-            "proportionate to each other, no text, no watermark, no people."
+            "proportionate to each other, no text overlay, no watermark, no people. "
+            + _NO_TEXT_EDIT_RULE
         )
         try:
             cover_variants = await engine.edit(images=all_raw_photos, prompt=cover_prompt, n=1)
@@ -211,6 +233,11 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
     # Capa determinística — só para 1 SKU, e antes do loop pago. Se a foto
     # bruta tiver fundo uniforme, a capa sai por recorte, sem custo de IA. Se
     # não der, `saved` continua 0 e tudo segue exatamente como antes.
+    # Bytes da capa deterministica, quando ela sai e passa no QA. E a foto mais
+    # confiavel da execucao: recorte do pixel original, sem IA no meio, entao o
+    # texto impresso no produto (volume, unidade, marca) e o real.
+    cover_prepared_bytes: bytes | None = None
+
     if len(skus) == 1:
         from app.services.image_deterministic_service import try_deterministic_cover
 
@@ -256,9 +283,9 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
                     is_approved=False,
                 ))
                 saved += 1
+                cover_prepared_bytes = prepared
 
     # Imagens individuais — sempre, uma chamada de edição por foto bruta.
-    # A 1a que passa no QA e sobe vira a foto-base dos cards de texto.
     first_individual_bytes: bytes | None = None
     for sku in skus:
         for raw_photo in raw_photos_by_sku[sku]:
@@ -298,14 +325,33 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
                 if first_individual_bytes is None:
                     first_individual_bytes = prepared
 
-    # Cards de texto — só para 1 SKU e só se alguma individual subiu. Sem foto
-    # individual não há base para compor o card, então o passo é pulado.
-    if len(skus) == 1 and first_individual_bytes is not None:
+    # Cards de texto — só para 1 SKU, e a base preferida é a CAPA
+    # DETERMINÍSTICA, não a primeira individual.
+    #
+    # Por que: o motor i2i altera o texto impresso no rótulo de forma
+    # estocástica. Um teste real com o SKU 37 saiu com a capa correta
+    # ("100ml | 3.38 fl.oz") e as individuais mostrando "160ml | 3.50 fl.ex",
+    # com a marca escrita "weoink". Os 3 cards herdaram o erro porque usavam a
+    # primeira individual como base — multiplicando por 3 uma imagem que
+    # ninguém tinha verificado.
+    #
+    # A capa determinística é recorte do pixel original, sem IA: o rótulo nela
+    # é sempre fiel. Ancorar os cards nela troca 3 imagens de risco
+    # probabilístico por 3 de risco zero. A individual continua como fallback
+    # para quando a capa não sai (foto bruta com fundo texturizado).
+    base_cards = cover_prepared_bytes or first_individual_bytes
+    if len(skus) == 1 and base_cards is not None:
+        logger.info(
+            "benefit_cards_base listing_id=%s sku=%s origem=%s",
+            listing.id,
+            skus[0],
+            "cover_deterministic" if cover_prepared_bytes else "individual",
+        )
         saved += await _append_benefit_cards(
             db,
             listing,
             access_token,
-            base_photo=first_individual_bytes,
+            base_photo=base_cards,
             source_sku=skus[0],
             start_sort_order=saved,
         )
