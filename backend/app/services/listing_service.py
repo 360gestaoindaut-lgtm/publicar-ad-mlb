@@ -135,6 +135,52 @@ class ListingService:
         from app.workers.tasks.category_tasks import predict_category
         predict_category.delay(str(listing.id))
 
+    @staticmethod
+    def _validar_valor(attr: ListingAttribute, item: dict) -> tuple[str | None, str | None]:
+        """Valida o valor submetido contra os `allowed_values` da categoria.
+
+        Atributo de lista com valor fora da lista e recusado AQUI, com 422 e a
+        lista do que e aceito. Antes, qualquer cliente da API podia gravar
+        qualquer texto: o valor entrava no banco, sobrevivia a geracao de imagem
+        e de descricao, e so era recusado la na frente pelo ML, com
+        `Attribute [X] is not valid, item values [(null:Y)]` — mensagem obscura,
+        no momento mais caro, depois de ja ter gastado IA.
+
+        Rejeitar cedo troca isso por um erro claro antes de qualquer gasto.
+        """
+        value_id = item.get("value_id")
+        value_name = item.get("value_name")
+        allowed = attr.allowed_values or []
+
+        # Sem lista de valores permitidos o atributo e texto livre (GTIN,
+        # MODEL, dimensoes): nada a validar.
+        if not allowed or value_name is None:
+            return value_id, value_name
+
+        opcoes = [v for v in allowed if isinstance(v, dict)]
+        if not opcoes:
+            return value_id, value_name
+
+        for v in opcoes:
+            nome = v.get("name")
+            if value_id and v.get("id") == value_id:
+                return v.get("id"), nome
+            if nome and str(nome).lower() == str(value_name).lower():
+                # Normaliza para o nome exato do ML e resolve o id de brinde:
+                # cliente que manda so o nome nao precisa saber o id.
+                return v.get("id"), nome
+
+        aceitos = [v.get("name") for v in opcoes]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Valor {value_name!r} não é válido para o atributo "
+                f"'{attr.attribute_name}' ({attr.attribute_id}) nesta categoria. "
+                f"Valores aceitos: {', '.join(str(a) for a in aceitos[:15])}"
+                + (f" (e mais {len(aceitos) - 15})" if len(aceitos) > 15 else "")
+            ),
+        )
+
     async def submit_attributes(self, listing: Listing, submitted: list[dict]) -> None:
         if listing.status != "pending_seller_attributes":
             raise HTTPException(
@@ -150,8 +196,9 @@ class ListingService:
             )
             attr = result.scalar_one_or_none()
             if attr:
-                attr.value_id = item.get("value_id")
-                attr.value_name = item.get("value_name")
+                value_id, value_name = self._validar_valor(attr, item)
+                attr.value_id = value_id
+                attr.value_name = value_name
                 attr.source = "seller"
 
         # Se imagens aprovadas e descrição já existem (retry após erro de publicação),

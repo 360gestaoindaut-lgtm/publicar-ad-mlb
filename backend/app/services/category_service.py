@@ -1,9 +1,13 @@
+import logging
+
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from app.models.listing import Listing
 from app.models.listing_attribute import ListingAttribute
 from app.models.seller import Seller
+
+logger = logging.getLogger(__name__)
 
 _ML_API = "https://api.mercadolibre.com"
 
@@ -158,11 +162,37 @@ class CategoryService:
 
             # Tenta casar value_id na lista de valores permitidos
             if value_name and allowed:
+                casou = False
                 for v in allowed:
                     if v["name"].lower() == value_name.lower():
                         value_id = v["id"]
                         value_name = v["name"]
+                        casou = True
                         break
+
+                # Nao casou: DESCARTA o valor em vez de gravar nome sem id.
+                #
+                # O ML recusa atributo de lista sem value_id — a resposta e
+                # `Attribute [X] is not valid, item values [(null:Y)]`, obscura e
+                # so na hora de publicar, depois de ja ter gasto geracao de
+                # imagem e descricao. Gravar um valor que a categoria nao conhece
+                # nao ajuda ninguem: melhor deixar vazio e cair no fluxo normal
+                # de "atributo pendente", que pede o valor certo ao seller.
+                #
+                # Acontece de verdade quando o prefill vem de outra categoria:
+                # "Colônia" e valido em MLB178938 (perfume pet) e inexistente em
+                # MLB6284 (perfumes), onde o equivalente chama "Água de colônia".
+                if not casou:
+                    logger.warning(
+                        "atributo_descartado attribute_id=%s valor=%r categoria=%s "
+                        "motivo=fora_dos_allowed_values opcoes=%s",
+                        attr_id,
+                        value_name,
+                        listing.ml_category_id,
+                        [v.get("name") for v in allowed][:10],
+                    )
+                    value_name = None
+                    value_id = None
 
             if not value_name and is_required:
                 has_unfilled_required = True
