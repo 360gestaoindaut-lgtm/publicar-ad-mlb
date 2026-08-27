@@ -72,3 +72,8 @@ logs/
 # Artefato de runtime do Celery beat (estado, nao codigo)
 celerybeat-schedule
 celerybeat.pid
+
+# Backups de .env — copia integral de segredos. O padrao *.env NAO pega
+# ".env.bak-20260827170436" (nao termina em .env), entao precisa de regra propria.
+.env.bak-*
+.env.backup*
