@@ -35,7 +35,8 @@ Sistema web para automação de criação e publicação de anúncios no Mercado
 | Trilha 2 · Fase 3 | ✅ | Cards de benefício: 3 imagens extras por anúncio (benefícios / modo de uso / especificações) montadas com Pillow sobre foto já gerada, texto por LLM, sem motor de IA de imagem |
 | Fase 5a | ✅ | Artefatos de produção: `Dockerfile.prod` multi-stage non-root, `docker-compose.prod.yml`, `.dockerignore`, limites de memória. Correção de segurança: `/openapi.json` fechado fora de development |
 | Fase 5b | ✅ | Deploy na VPS: vhost + TLS, `.env` de produção gerado do zero, stack no ar, migrations aplicadas. Correção de 2 bugs de OAuth |
-| Fase 6 | 🔲 | Frontend em produção (Vercel ou na própria VPS) + teste do pipeline com SKU real |
+| Fase 5c | ✅ | **Primeiro anúncio real publicado**: `MLB5145387291` (SKU 37, Wepink Martin). Validação de `allowed_values`, modo catálogo (`family_name`), cards a partir da capa determinística |
+| Fase 6 | 🔲 | Frontend em produção (Vercel ou na própria VPS) + revisão humana de categoria |
 
 > **Railway e Vercel foram descartados para o backend.** A escolha final foi
 > VPS própria, que já hospedava outros apps da 360.
@@ -125,6 +126,15 @@ docker compose -p publicar-ad-mlb -f docker-compose.prod.yml exec backend pytest
 
 ---
 
+> **A qualidade da foto bruta limita o teto do resultado.** Metade das imagens
+> do SKU 37 saía com o texto "MARTIN" marmorizado, e a suspeita natural foi o
+> motor. Não era: **o defeito já estava na `37-2.jpg` original** — o modelo
+> estava sendo fiel a ela. Trocar a foto resolveu; nenhum ajuste de prompt
+> resolveria, porque a informação não existia na entrada. Antes de culpar o
+> modelo por texto ruim, **abrir a foto de origem**.
+
+---
+
 ## Variáveis de ambiente
 
 Copie `.env.example` para `.env`. NUNCA commite `.env`.
@@ -152,6 +162,14 @@ Chaves relevantes:
   `ALLOWED_ORIGINS=["https://x"]`. Em produção está **omitida** de propósito.
 
 > `FREEPIK_API_KEY` não é mais necessário — FreePik foi descartado; imagens geradas pelo Gemini Imagen 4.
+
+> **`OPENAI_IMAGE_MODEL`: o `.env` mascara o default do `config.py`.** O default
+> no código é `gpt-image-2`, mas produção rodou semanas com `gpt-image-1`
+> porque o `.env` (copiado do de dev na Fase 5b) trazia o valor antigo, e
+> `.env` sempre vence o default. O sintoma foi rótulo corrompido nas imagens
+> (`160ml` no lugar de `100ml`, `weoink` no lugar de `wepink`). **Conferir o
+> valor carregado em RUNTIME dentro do container, não no arquivo** — e não só
+> no backend: quem instancia o `OpenAIEditEngine` é o `celery_worker`.
 
 > **`FERNET_KEY` NÃO pode vir de `openssl rand -hex 32`.** O `Fernet()` exige 32
 > bytes em **base64 url-safe** (44 chars). Pior: `_fernet` é construído em nível
@@ -273,6 +291,27 @@ instanciação. Os prompts ficam centralizados em `ai/prompts.py` como
 `_call(prompt, max_tokens, temperature)`, e `claude.py` reusa `_extract_json`
 de `gemini.py` em vez de duplicar.
 
+### Atributo de lista: validar contra `allowed_values`
+Atributo com lista de valores permitidos só aceita valor que exista na lista
+**daquela categoria**. `submit_attributes` recusa com **422** listando os
+aceitos, e resolve o `value_id` sozinho quando o cliente manda só o nome;
+`_save_attributes` descarta prefill que não casa, em vez de gravar nome com
+`value_id` nulo.
+
+Sem isso o erro só aparece na publicação, como
+`Attribute [X] is not valid, item values [(null:Y)]` — mensagem obscura, no
+momento mais caro, depois de já ter gasto geração de imagem e descrição. O
+caso real: `"Colônia"` é válido em MLB178938 (perfume **pet**) e inexistente
+em MLB6284 (perfumes), onde o equivalente é `"Água de colônia"`.
+
+### Modo catálogo do ML: `family_name` em vez de `title`
+Algumas categorias recusam `title` e exigem `family_name` — os dois são
+**mutuamente exclusivos**. A detecção **não** usa campo da categoria:
+`settings.catalog_domain` existe em TODAS as categorias verificadas
+(perfumes, desodorantes, celulares, perfume pet), então gatear nele mandaria
+todo anúncio para o modo catálogo. `publish_service` tenta com `title` e, se
+o ML recusar por falta de `family_name`, refaz sem `title`.
+
 ### Nada de estado em memória de processo
 A API roda com `uvicorn --workers 2` em produção. Qualquer estado guardado em
 variável de módulo (dict, cache, contador) vive **num worker só**: uma
@@ -352,6 +391,12 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 - `product_import_service.py` — parser CSV/XLSX de produtos (auto-detect delimitador)
 - `batch_import_service.py` — parser CSV/XLSX de anúncios (auto-detect delimitador)
 - `image_card_copy_service.py` — copy dos cards via LLM: `CARD_KINDS`, `CardCopy`, `generate_card_copy()`. **Nunca levanta exceção** — devolve `[]` em falha e descarta ângulo inutilizável. Sanitiza sem confiar no LLM: trunca título em 40 e bullets em 50 chars, exige 2–3 bullets, e roda uma **denylist de conteúdo proibido pelo ML** (preço, URL, telefone, frete grátis, superlativo) no texto **cru, antes de truncar** — truncar o preço para fora não pode servir de lavagem
+> **Base dos cards é a CAPA DETERMINÍSTICA**, com fallback para a 1ª
+> individual. A capa é recorte do pixel original, sem IA: o rótulo nela é
+> sempre fiel. Ancorar os cards nela troca 3 imagens de risco probabilístico
+> por 3 de risco zero — antes, os 3 cards herdavam o rótulo corrompido de uma
+> imagem de IA que ninguém tinha verificado.
+
 - `image_benefit_card_service.py` — renderizador Pillow: `render_benefit_card()` → JPEG 1200×1200, `CardRenderError`. Foto em contain-fit na faixa y=0..640, bloco de texto centralizado em y=700..1110 com clamp que impede desenho fora do canvas (descarta o último bullet se não couber)
 
 ### backend/app/api/v1/endpoints/
@@ -384,7 +429,7 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 - `test_image_tasks_i2i.py` — `TestBenefitCardsIntegration`: ordem dos 3 cards, `sort_order` contíguo, falha de 1 card não derruba os outros, nenhum card sem individual salva, kit não gera card
 - `test_ml_oauth_state.py` — state do OAuth no Redis (incluindo o cenário "inicia num worker, completa em outro") e destino pós-callback com/sem `FRONTEND_URL`
 
-> Suíte completa: **257 passed**. Os 2 warnings (`coroutine '_generate_images_async'
+> Suíte completa: **274 passed**. Os 2 warnings (`coroutine '_generate_images_async'
 > was never awaited`) são pré-existentes em `test_image_tasks.py`.
 
 ### Migrations aplicadas (ordem cronológica)
