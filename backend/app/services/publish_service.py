@@ -16,6 +16,16 @@ ML_ITEMS_URL = "https://api.mercadolibre.com/items"
 ML_TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
 
 
+def _exige_family_name(texto_erro: str) -> bool:
+    """True quando o ML recusou o item por falta de `family_name`.
+
+    A resposta vem como:
+        body.required_fields | The body does not contains some or none of the
+        following properties [family_name]
+    """
+    return "family_name" in (texto_erro or "")
+
+
 class MLValidationError(Exception):
     """Erro de validação retornado pela API do ML (HTTP 400). Não deve ser retentado."""
 
@@ -119,6 +129,33 @@ class PublishService:
                 headers={"Authorization": f"Bearer {access_token}"},
                 json=body,
             )
+
+            # Modo catalogo: algumas categorias recusam `title` e exigem
+            # `family_name` no lugar dele. Os dois sao MUTUAMENTE EXCLUSIVOS —
+            # mandar ambos devolve "The fields [title] are invalid".
+            #
+            # A decisao de qual usar vem da RESPOSTA do ML, nao de um campo da
+            # categoria. Foi tentado: `settings.catalog_domain` existe em
+            # TODAS as categorias testadas (perfumes, desodorantes, celulares,
+            # perfume pet), entao gatear nele mandaria todo anuncio para o modo
+            # catalogo. Nenhum outro campo de `settings` discrimina. Perguntar
+            # e mais barato e mais honesto que adivinhar por um proxy errado.
+            if resp.status_code == 400 and _exige_family_name(resp.text):
+                logger.info(
+                    "publish_catalog_mode listing_id=%s categoria=%s "
+                    "motivo=ml_exigiu_family_name",
+                    listing.id,
+                    listing.ml_category_id,
+                )
+                body_catalogo = {k: v for k, v in body.items() if k != "title"}
+                # O family_name sai do titulo que o seller aprovou. Nao ha
+                # invencao aqui: e o mesmo texto que iria no `title`.
+                body_catalogo["family_name"] = listing.selected_title
+                resp = await client.post(
+                    ML_ITEMS_URL,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    json=body_catalogo,
+                )
 
         if resp.status_code == 400:
             error_text = resp.text[:1200]
