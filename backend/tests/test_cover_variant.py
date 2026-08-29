@@ -195,10 +195,16 @@ class TestCoverAiVariantEndpointEngineUnavailable:
     a função da rota diretamente com os Depends() substituídos por mocks —
     mesma técnica usada para as tasks Celery em test_image_tasks.py, sem
     precisar de TestClient/DB real (padrão inexistente hoje na suíte).
+
+    Aqui o serviço inteiro é mockado — isso testa só o mapeamento de exceção
+    para HTTP, nada além disso. A invariante "nenhuma escrita no banco antes
+    da falha do motor" é responsabilidade do serviço, não do endpoint, e por
+    isso é coberta em `TestGenerateCoverVariantEngineUnavailable` abaixo, que
+    chama a implementação real.
     """
 
     @pytest.mark.asyncio
-    async def test_engine_unavailable_maps_to_502_with_actionable_message_and_no_row_saved(self):
+    async def test_engine_unavailable_maps_to_502_with_actionable_message(self):
         from fastapi import HTTPException
 
         from app.api.v1.endpoints.listings import generate_cover_ai_variant
@@ -229,7 +235,41 @@ class TestCoverAiVariantEndpointEngineUnavailable:
 
         assert exc_info.value.status_code == 502, "nao pode cair no handler generico (500)"
         assert "indispon" in exc_info.value.detail.lower()
+
+
+class TestGenerateCoverVariantEngineUnavailable:
+    """Fix round 2: a asserção `db.add` não foi chamado precisa alcançar
+    código real, não um serviço mockado inteiro (isso era teatro — o
+    endpoint nunca chama `db.add` diretamente, então a asserção anterior era
+    verdadeira mesmo com um `db.add()` movido para antes do `engine.edit()`).
+
+    Aqui é `generate_cover_variant` de verdade quem roda: só o
+    `OpenAIEditEngine` é mockado, levantando `ImageEngineUnavailableError`
+    antes de devolver bytes. Se alguém mover uma escrita no banco para antes
+    da chamada do motor, este teste quebra.
+    """
+
+    @pytest.mark.asyncio
+    async def test_engine_failure_writes_nothing_to_the_database(self):
+        from app.services.cover_variant_service import generate_cover_variant
+        from app.services.image_engines.base import ImageEngineUnavailableError
+
+        cover = _make_cover(image_bytes=b"cover-bytes")
+        listing = _make_listing()
+        mock_db = _make_db(cover)
+
+        with patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(
+                side_effect=ImageEngineUnavailableError("Timeout ao chamar a OpenAI (edits): boom")
+            )
+
+            with pytest.raises(ImageEngineUnavailableError):
+                await generate_cover_variant(mock_db, listing, "token-xyz")
+
         mock_db.add.assert_not_called()
+        mock_db.commit.assert_not_awaited()
 
 
 class TestGenerateCoverVariantPrompt:
