@@ -13,10 +13,15 @@ from app.services.image_service import ImageValidationResult
 
 
 def _make_db(cover_image):
-    """AsyncMock de sessão cuja primeira (e única) query devolve `cover_image`."""
+    """AsyncMock de sessão cuja primeira (e única) query devolve `cover_image`.
+
+    A busca da capa usa `.scalars().first()` (e não `scalar_one_or_none`)
+    porque um anúncio pode ter mais de uma linha `cover_deterministic` — ver
+    `_load_latest_deterministic_cover`. `first()` sobre lista vazia devolve
+    None, que é o caso "sem capa"."""
     mock_db = AsyncMock()
     mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = cover_image
+    mock_result.scalars.return_value.first.return_value = cover_image
     mock_db.execute = AsyncMock(return_value=mock_result)
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()
@@ -304,3 +309,114 @@ class TestGenerateCoverVariantPrompt:
         prompt = mock_engine_cls.return_value.edit.await_args.kwargs["prompt"]
         assert "CRITICAL" in prompt
         assert "pixel-faithful" in prompt
+
+
+class _DuplicateCoversResult:
+    """Resultado que se comporta como o `Result` REAL do SQLAlchemy quando a
+    query casa com mais de uma linha: `scalar_one_or_none()` estoura
+    `MultipleResultsFound`, `scalars().first()` devolve a primeira.
+
+    Isso reproduz em teste o 500 opaco de produção: nada apaga
+    `ListingImage`, e cada passada de `_try_i2i_generation` insere uma linha
+    `cover_deterministic` (inclusive uma `validation_failed` sem bytes), então
+    a 2ª geração de imagens do mesmo anúncio deixa duas linhas casando com a
+    busca da capa.
+    """
+
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def scalar_one_or_none(self):
+        from sqlalchemy.exc import MultipleResultsFound
+
+        if len(self._rows) > 1:
+            raise MultipleResultsFound(
+                "Multiple rows were found when one or none was required"
+            )
+        return self._rows[0] if self._rows else None
+
+    def scalars(self):
+        holder = MagicMock()
+        holder.first.return_value = self._rows[0] if self._rows else None
+        holder.all.return_value = list(self._rows)
+        return holder
+
+
+class TestCoverLookupWithDuplicateCovers:
+    @pytest.mark.asyncio
+    async def test_two_deterministic_covers_do_not_raise_multiple_results_found(self):
+        """Alcançável pelo fluxo normal: retry_pipeline → submit_attributes →
+        POST /pipeline/generate_images (ou confirm_image_engine('retry_openai'))
+        roda `_try_i2i_generation` de novo e insere a 2ª capa."""
+        from app.services.cover_variant_service import generate_cover_variant
+
+        newest = _make_cover(image_bytes=b"capa-nova")
+        oldest = _make_cover(image_bytes=b"capa-antiga")
+        listing = _make_listing()
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=_DuplicateCoversResult([newest, oldest]))
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        prepared = b"prepared-bytes"
+        verdict = ImageValidationResult(is_valid=True)
+
+        with patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            return_value=(prepared, verdict),
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"variant-bytes"])
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic-ai-1")
+
+            candidate = await generate_cover_variant(mock_db, listing, "token-xyz")
+
+        assert candidate.status == "uploaded"
+        # A capa usada como origem é a que a ordenação da query põe em 1º.
+        edit_kwargs = mock_engine_cls.return_value.edit.await_args.kwargs
+        assert edit_kwargs["images"] == [b"capa-nova"]
+
+    @pytest.mark.asyncio
+    async def test_cover_query_skips_byteless_rows_and_takes_the_newest(self):
+        """A linha `validation_failed` tem `image_bytes=None` e nunca serve de
+        origem; entre as que têm bytes, a mais recente é a publicada. Isso é
+        decidido no SQL (o mock não filtra nada), então é o SQL que se
+        inspeciona aqui."""
+        from app.services.cover_variant_service import generate_cover_variant
+
+        cover = _make_cover(image_bytes=b"cover-bytes")
+        listing = _make_listing()
+        mock_db = _make_db(cover)
+
+        prepared = b"prepared-bytes"
+        verdict = ImageValidationResult(is_valid=True)
+
+        with patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            return_value=(prepared, verdict),
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"variant-bytes"])
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic-ai-1")
+
+            await generate_cover_variant(mock_db, listing, "token-xyz")
+
+        sql = str(mock_db.execute.await_args_list[0].args[0])
+        assert "listing_images.image_bytes IS NOT NULL" in sql, sql
+        assert "ORDER BY listing_images.created_at DESC" in sql, sql
+        assert "LIMIT" in sql, sql

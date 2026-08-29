@@ -44,7 +44,7 @@ def _make_db(cover_image, attributes=None):
     ordem em que `generate_specs_variant` as executa."""
     mock_db = AsyncMock()
     cover_result = MagicMock()
-    cover_result.scalar_one_or_none.return_value = cover_image
+    cover_result.scalars.return_value.first.return_value = cover_image
     attrs_result = MagicMock()
     attrs_result.scalars.return_value.all.return_value = list(attributes or [])
     mock_db.execute = AsyncMock(side_effect=[cover_result, attrs_result])
@@ -290,3 +290,111 @@ class TestApproveImagesReviewSeconds:
         assert approved_img.status == "approved"
         assert listing.status == "generating_description"
         db.commit.assert_awaited()
+
+
+class _DuplicateCoversResult:
+    """Igual ao homonimo de test_cover_variant.py: emula o `Result` REAL do
+    SQLAlchemy quando a query casa com mais de uma linha —
+    `scalar_one_or_none()` estoura `MultipleResultsFound`."""
+
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def scalar_one_or_none(self):
+        from sqlalchemy.exc import MultipleResultsFound
+
+        if len(self._rows) > 1:
+            raise MultipleResultsFound(
+                "Multiple rows were found when one or none was required"
+            )
+        return self._rows[0] if self._rows else None
+
+    def scalars(self):
+        holder = MagicMock()
+        holder.first.return_value = self._rows[0] if self._rows else None
+        holder.all.return_value = list(self._rows)
+        return holder
+
+
+class TestSpecsCoverLookupWithDuplicateCovers:
+    @pytest.mark.asyncio
+    async def test_two_deterministic_covers_do_not_raise_multiple_results_found(self):
+        """Mesma falha da Frente A e pelo mesmo caminho: a 2a passada de
+        `_try_i2i_generation` no mesmo anuncio deixa duas linhas
+        `cover_deterministic`, e `scalar_one_or_none` viraria 500 opaco."""
+        from app.services.specs_variant_service import generate_specs_variant
+
+        listing = _make_listing()
+        newest = _make_cover(listing.id, image_bytes=b"capa-nova")
+        oldest = _make_cover(listing.id, image_bytes=b"capa-antiga")
+
+        attrs_result = MagicMock()
+        attrs_result.scalars.return_value.all.return_value = []
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(
+            side_effect=[_DuplicateCoversResult([newest, oldest]), attrs_result]
+        )
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        specs_copy = CardCopy(
+            kind="card_specs", title="Ficha tecnica", bullets=["Bullet 1"]
+        )
+        verdict = ImageValidationResult(is_valid=True)
+
+        with patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=[specs_copy],
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            return_value=(b"prepared", verdict),
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"variant-bytes"])
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic-specs-1")
+
+            candidate = await generate_specs_variant(mock_db, listing, "token-xyz")
+
+        assert candidate.status == "uploaded"
+        assert mock_engine_cls.return_value.edit.await_args.kwargs["images"] == [b"capa-nova"]
+
+    @pytest.mark.asyncio
+    async def test_cover_query_skips_byteless_rows_and_takes_the_newest(self):
+        """A escolha da capa acontece no SQL (o mock nao filtra nada), entao e
+        o SQL que se inspeciona — mesma checagem da Frente A."""
+        from app.services.specs_variant_service import generate_specs_variant
+
+        listing = _make_listing()
+        cover = _make_cover(listing.id, image_bytes=b"cover-bytes")
+        mock_db = _make_db(cover)
+
+        specs_copy = CardCopy(
+            kind="card_specs", title="Ficha tecnica", bullets=["Bullet 1"]
+        )
+        verdict = ImageValidationResult(is_valid=True)
+
+        with patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+            return_value=[specs_copy],
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            return_value=(b"prepared", verdict),
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"variant-bytes"])
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic-specs-1")
+
+            await generate_specs_variant(mock_db, listing, "token-xyz")
+
+        sql = str(mock_db.execute.await_args_list[0].args[0])
+        assert "listing_images.image_bytes IS NOT NULL" in sql, sql
+        assert "ORDER BY listing_images.created_at DESC" in sql, sql
+        assert "LIMIT" in sql, sql

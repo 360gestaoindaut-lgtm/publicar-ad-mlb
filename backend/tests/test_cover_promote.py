@@ -163,34 +163,65 @@ class TestPromoteCoverValidation:
 
 
 class TestPromoteCoverGalleryUntouched:
+    """Versão anterior deste teste não podia falhar: individuais e card eram
+    construídos localmente e NUNCA voltavam de nenhum `db.execute` mockado.
+    `promote_cover` só consegue mutar objetos que a sessão lhe entrega, então
+    `before == after` era verdade por construção — até com a query
+    escancarada pra galeria inteira.
+
+    Aqui a sessão ENTREGA a galeria inteira no resultado de "quem mais está
+    em sort_order=0", simulando exatamente a query sem filtro de `kind` que
+    o código tinha. Se a função rebaixar sem olhar o `kind`, o teste falha.
+    """
+
     @pytest.mark.asyncio
-    async def test_individuals_and_cards_keep_their_sort_order_and_approval(self):
-        """A garantia "nada mais se move" era estrutural (a função nunca
-        consulta além de alvo e duplicatas em sort_order=0), não testada.
-        Este teste põe individuais e cards na galeria com valores que não
-        colidem com nenhuma query de `promote_cover` e confere que nenhum
-        atributo deles muda."""
+    async def test_individuals_and_cards_handed_over_by_the_session_are_not_demoted(self):
+        """Cenário real do bug: `approve_images` reatribui `sort_order` pela
+        ordem de `approved_ids`, então a 1ª foto aprovada — uma `individual`
+        — fica em sort_order=0 junto da capa. Promover a variante IA não
+        pode despublicar essa foto."""
         from app.services.cover_variant_service import promote_cover
 
         listing = _make_listing()
         cover_det = _make_image(listing.id, "cover_deterministic", True, 0, "pic-det")
         cover_ai = _make_image(listing.id, "cover_ai", False, 90, "pic-ai")
-        individual_1 = _make_image(listing.id, "individual", True, 1, "pic-1")
-        individual_2 = _make_image(listing.id, "individual", True, 2, "pic-2")
-        card = _make_image(listing.id, "card_specs", True, 50, "pic-card")
+        individual_1 = _make_image(listing.id, "individual", True, 0, "pic-1")
+        individual_2 = _make_image(listing.id, "individual", True, 0, "pic-2")
+        card = _make_image(listing.id, "card_specs", True, 0, "pic-card")
 
-        before = [
-            (img.id, img.approved, img.sort_order) for img in (individual_1, individual_2, card)
-        ]
+        untouchable = (individual_1, individual_2, card)
+        before = [(img.id, img.approved, img.sort_order) for img in untouchable]
 
+        db = _make_db(
+            _target_result(cover_ai),
+            _others_result([cover_det, individual_1, individual_2, card]),
+        )
+
+        await promote_cover(db, listing, cover_ai.id)
+
+        after = [(img.id, img.approved, img.sort_order) for img in untouchable]
+        assert before == after, "promote_cover rebaixou imagem que nao e capa"
+
+        # A capa determinística — essa sim promovível — trocou de lugar.
+        assert cover_ai.approved is True and cover_ai.sort_order == 0
+        assert cover_det.approved is False and cover_det.sort_order == 90
+
+    @pytest.mark.asyncio
+    async def test_demotion_query_filters_by_kind_in_sql(self):
+        """O guard em memória (teste acima) protege a escrita; este confere
+        que o banco nem chega a devolver linha não-capa — sem isso a query
+        travaria (`with_for_update`) e carregaria a galeria inteira à toa."""
+        from app.services.cover_variant_service import promote_cover
+
+        listing = _make_listing()
+        cover_det = _make_image(listing.id, "cover_deterministic", True, 0, "pic-det")
+        cover_ai = _make_image(listing.id, "cover_ai", False, 90, "pic-ai")
         db = _make_db(_target_result(cover_ai), _others_result([cover_det]))
 
         await promote_cover(db, listing, cover_ai.id)
 
-        after = [
-            (img.id, img.approved, img.sort_order) for img in (individual_1, individual_2, card)
-        ]
-        assert before == after
+        others_query = str(db.execute.await_args_list[1].args[0])
+        assert "listing_images.kind IN" in others_query, others_query
 
 
 class TestPromoteCoverIdempotency:

@@ -23,12 +23,11 @@ import logging
 from sqlalchemy import select
 
 from app.models.listing_attribute import ListingAttribute
-from app.models.listing_image import ListingImage
-from app.services.cover_variant_service import COVER_DETERMINISTIC_KIND
+from app.models.listing_image import SPECS_AI_KIND, ListingImage
+from app.services.cover_variant_service import _load_latest_deterministic_cover
 
 logger = logging.getLogger(__name__)
 
-SPECS_AI_KIND = "specs_ai"
 SPECS_AI_SORT_ORDER = 91  # fora da faixa 0..N da galeria, ao lado de COVER_AI_SORT_ORDER=90
 
 
@@ -80,14 +79,12 @@ async def generate_specs_variant(db, listing, access_token: str) -> ListingImage
     from app.services.image_service import MLPictureService
     from app.workers.tasks.image_tasks import _prepare_image_for_upload
 
-    cover = (
-        await db.execute(
-            select(ListingImage).where(
-                ListingImage.listing_id == listing.id,
-                ListingImage.kind == COVER_DETERMINISTIC_KIND,
-            )
-        )
-    ).scalar_one_or_none()
+    # Mesma busca da Frente A, e pelo mesmo motivo: pode haver MAIS DE UMA
+    # linha `cover_deterministic` (nada apaga ListingImage, e cada passada de
+    # `_try_i2i_generation` insere uma, inclusive uma `validation_failed` sem
+    # bytes). `scalar_one_or_none` estouraria `MultipleResultsFound` — 500
+    # opaco no lugar do 409 deliberado. Ver o docstring do helper.
+    cover = await _load_latest_deterministic_cover(db, listing)
 
     if cover is None or cover.image_bytes is None:
         raise SpecsVariantError(

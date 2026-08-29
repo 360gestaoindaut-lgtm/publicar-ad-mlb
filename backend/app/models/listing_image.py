@@ -6,6 +6,31 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
+# --------------------------------------------------------------------------
+# Vocabulario da coluna `kind`. Mora aqui, no model, porque mais de um modulo
+# (services de variante, worker de imagens, listing_service) precisa decidir
+# comportamento a partir do MESMO conjunto de valores — duplicar as strings em
+# cada call site foi exatamente o que permitiu que os dois pontos de aprovacao
+# em massa esquecessem os candidatos.
+# --------------------------------------------------------------------------
+COVER_DETERMINISTIC_KIND = "cover_deterministic"
+COVER_AI_KIND = "cover_ai"
+SPECS_AI_KIND = "specs_ai"
+
+# Unicos kinds que podem ocupar sort_order=0. `promote_cover` valida o alvo
+# contra este conjunto E restringe a ele o rebaixamento: uma foto `individual`
+# aprovada pelo operador como capa (approve_images atribui sort_order=0 a
+# primeira da lista) jamais pode ser despublicada por uma promocao de capa.
+PROMOTABLE_COVER_KINDS = frozenset({COVER_DETERMINISTIC_KIND, COVER_AI_KIND})
+
+# Candidatos gerados por IA SOB DEMANDA (Frentes A e B). Nascem
+# `approved=False` em sort_order 90/91 e so viram capa por acao humana
+# explicita. Toda aprovacao em massa (worker batch, bulk_approve_images) TEM
+# de exclui-los: aprovado + ml_picture_id e o filtro que monta o payload de
+# fotos da publicacao, entao um candidato aprovado por engano vai ao ar no
+# anuncio real.
+CANDIDATE_KINDS = frozenset({COVER_AI_KIND, SPECS_AI_KIND})
+
 
 class ListingImage(Base):
     __tablename__ = "listing_images"
