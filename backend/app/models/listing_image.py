@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from uuid import uuid4
-from sqlalchemy import Boolean, DateTime, ForeignKey, SmallInteger, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, SmallInteger, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
@@ -25,5 +25,17 @@ class ListingImage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    # Bytes exatos que subiram para o ML, guardados para que a variante de capa
+    # parta do MESMO arquivo publicado — nao de uma re-derivacao. Re-derivar seria
+    # identico enquanto a foto bruta nao mudasse, mas o seller PODE trocar a foto
+    # (aconteceu com 37-2.jpg), e ai a variante sairia de uma imagem diferente da
+    # que esta no anuncio, sem ninguem perceber. Nullable, sem backfill: registros
+    # antigos ficam com NULL, e so a capa deterministica popula esta coluna hoje.
+    image_bytes: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+
+    # Tempo que um humano levou conferindo a versao gerada por IA contra o dado
+    # real. Instrumentacao manual, amostra de 10-15 SKUs — nao e analytics.
+    review_seconds: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
 
     listing: Mapped["Listing"] = relationship("Listing", back_populates="images")

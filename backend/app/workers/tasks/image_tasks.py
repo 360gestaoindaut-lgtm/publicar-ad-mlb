@@ -278,6 +278,12 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
                     sort_order=saved,
                     kind="cover_deterministic",
                     source_sku=only_sku,
+                    # Bytes exatos que subiram para o ML — a futura variante de
+                    # capa parte deles, nunca de uma re-derivacao. Re-derivar
+                    # seria identico enquanto a foto bruta nao mudasse, mas o
+                    # seller pode trocar a foto (aconteceu com 37-2.jpg), e ai
+                    # a variante sairia de uma imagem diferente da publicada.
+                    image_bytes=prepared,
                 ))
                 db.add(ProductImage(
                     seller_id=listing.seller_id,
