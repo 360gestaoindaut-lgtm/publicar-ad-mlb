@@ -254,7 +254,8 @@ async def generate_cover_ai_variant(
     """Gera sob demanda a variante ambientada da capa (Frente A).
 
     Nasce como candidato não aprovado (`approved=False`) — não muda o anúncio
-    automaticamente. Um humano revisa e decide se promove (Frente B).
+    automaticamente. Um humano revisa e decide se promove (`promote_cover`,
+    também Frente A).
     """
     from app.services.cover_variant_service import CoverVariantError, generate_cover_variant
     from app.services.image_engines.base import ImageEngineUnavailableError
@@ -289,7 +290,7 @@ async def promote_cover(
     active_seller=Depends(get_active_seller),
     db: AsyncSession = Depends(get_db),
 ):
-    """Decide qual imagem ocupa a capa do anúncio (Frente B).
+    """Decide qual imagem ocupa a capa do anúncio (Frente A).
 
     A imagem escolhida — capa determinística ou variante IA — assume
     `sort_order=0` e `approved=True`; a que estava lá volta a ser candidata

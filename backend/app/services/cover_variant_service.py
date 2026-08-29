@@ -4,7 +4,7 @@ Nada aqui roda automaticamente — o pipeline batch/manual continua produzindo
 a capa por `_try_i2i_generation` (recorte determinístico, sem custo de IA)
 exatamente como hoje. Este serviço só é acionado quando um humano chama o
 endpoint dedicado, revisa o resultado e decide se ele deve virar a capa
-publicada (promoção é a Frente B, fora deste arquivo).
+publicada (a promoção — `promote_cover`, abaixo — também é Frente A).
 
 A variante parte SEMPRE dos bytes que já subiram para o ML na capa
 determinística (`ListingImage.image_bytes`), nunca de uma re-derivação da foto
@@ -128,7 +128,7 @@ async def generate_cover_variant(db, listing, access_token: str) -> ListingImage
 
 
 async def promote_cover(db, listing, image_id: UUID) -> None:
-    """Troca qual imagem ocupa sort_order=0 na galeria (Frente B).
+    """Troca qual imagem ocupa sort_order=0 na galeria (Frente A).
 
     A imagem alvo precisa ser deste anuncio e ter `kind` em
     `{"cover_deterministic", "cover_ai"}` — senao 422 (ex.: tentar promover
@@ -136,21 +136,37 @@ async def promote_cover(db, listing, image_id: UUID) -> None:
     anuncio, 404 (mesma semantica de "nao encontrado" usada em
     `ListingService.get_or_404`).
 
-    A imagem promovida passa a `approved=True, sort_order=0`. A capa que
-    estava em `sort_order=0` volta a ser candidata (`approved=False,
-    sort_order=COVER_AI_SORT_ORDER`) — nunca e apagada, so troca de lugar,
-    pra o operador poder promover de volta depois. As demais imagens da
-    galeria (individuais, cards) nao sao tocadas.
+    A imagem promovida passa a `approved=True, sort_order=0`. Toda linha que
+    hoje ocupa `sort_order=0` e nao e o alvo volta a ser candidata
+    (`approved=False, sort_order=COVER_AI_SORT_ORDER`) — nunca e apagada, so
+    troca de lugar, pra o operador poder promover de volta depois. As demais
+    imagens da galeria (individuais, cards) nao sao tocadas.
 
-    Idempotente: promover quem ja esta em sort_order=0 e um no-op (retorna
-    sem escrever no banco) — nao duplica nem apaga a propria capa atual.
+    Rebaixa TODAS as linhas em sort_order=0 (nao so "a" capa atual, via
+    `scalar_one_or_none`), porque duas requisicoes concorrentes de promocao
+    no mesmo anuncio (duplo clique, retry, duas abas) podem terminar com mais
+    de uma imagem em sort_order=0 — sem isso, a proxima chamada estouraria
+    `MultipleResultsFound`, um 500 opaco. Rebaixar a lista inteira faz a
+    funcao se autocurar: se o estado ja estiver corrompido, a proxima
+    promocao conserta em vez de quebrar.
+
+    `with_for_update()` bloqueia essas linhas ate o commit (ou rollback)
+    desta transacao, serializando promocoes concorrentes no mesmo anuncio —
+    e o que impede a corrida acima de acontecer dai em diante (o
+    autocuramento cobre o estado que uma corrida ANTERIOR a este guard possa
+    ter deixado para tras).
+
+    Idempotente: promover quem ja esta em sort_order=0 e sem duplicatas para
+    rebaixar e um no-op (nao escreve no banco).
     """
     target = (
         await db.execute(
-            select(ListingImage).where(
+            select(ListingImage)
+            .where(
                 ListingImage.id == image_id,
                 ListingImage.listing_id == listing.id,
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
 
@@ -163,30 +179,38 @@ async def promote_cover(db, listing, image_id: UUID) -> None:
             detail="Somente a capa deterministica ou a variante gerada por IA podem ser promovidas a capa",
         )
 
-    if target.sort_order == COVER_SORT_ORDER:
-        # Ja e a capa atual — idempotente, nada a fazer.
-        return
-
-    current_cover = (
+    others_at_cover = (
         await db.execute(
-            select(ListingImage).where(
+            select(ListingImage)
+            .where(
                 ListingImage.listing_id == listing.id,
                 ListingImage.sort_order == COVER_SORT_ORDER,
+                ListingImage.id != target.id,
             )
+            .order_by(ListingImage.id)
+            .with_for_update()
         )
-    ).scalar_one_or_none()
+    ).scalars().all()
 
-    target.approved = True
-    target.sort_order = COVER_SORT_ORDER
+    changed = False
 
-    if current_cover is not None:
-        current_cover.approved = False
-        current_cover.sort_order = COVER_AI_SORT_ORDER
+    for demoted in others_at_cover:
+        demoted.approved = False
+        demoted.sort_order = COVER_AI_SORT_ORDER
+        changed = True
+
+    if target.sort_order != COVER_SORT_ORDER or not target.approved:
+        target.approved = True
+        target.sort_order = COVER_SORT_ORDER
+        changed = True
+
+    if not changed:
+        return
 
     await db.commit()
     logger.info(
-        "cover_promote listing_id=%s promoted_id=%s demoted_id=%s",
+        "cover_promote listing_id=%s promoted_id=%s demoted_ids=%s",
         listing.id,
         target.id,
-        current_cover.id if current_cover is not None else None,
+        [d.id for d in others_at_cover],
     )
