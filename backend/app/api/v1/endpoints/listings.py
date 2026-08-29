@@ -243,3 +243,27 @@ async def activate_listing(
 
     await PublishService(db).activate_listing(listing, seller)
     return {"status": "published"}
+
+
+@router.post("/{listing_id}/images/cover-ai-variant", response_model=ImageOut, status_code=201)
+async def generate_cover_ai_variant(
+    listing_id: UUID,
+    active_seller=Depends(get_active_seller),
+    db: AsyncSession = Depends(get_db),
+):
+    """Gera sob demanda a variante ambientada da capa (Frente A).
+
+    Nasce como candidato não aprovado (`approved=False`) — não muda o anúncio
+    automaticamente. Um humano revisa e decide se promove (Frente B).
+    """
+    from app.services.cover_variant_service import CoverVariantError, generate_cover_variant
+    from app.services.publish_service import get_valid_access_token
+
+    svc = ListingService(db)
+    listing = await svc.get_or_404(listing_id, active_seller.id)
+    access_token = await get_valid_access_token(active_seller, db)
+    try:
+        candidate = await generate_cover_variant(db, listing, access_token)
+    except CoverVariantError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return ImageOut.model_validate(candidate)
