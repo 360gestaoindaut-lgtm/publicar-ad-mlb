@@ -36,7 +36,9 @@ verdade até decisão explícita de substituição.
 |---|---|
 | Passo 0.1 — descoberta de fotos além do mínimo | ✅ `fetch_raw_photos` sonda até `RAW_PHOTOS_MAX` (10); as 2 primeiras seguem obrigatórias |
 | Passo 0.2 — fonte da posição 4 | ✅ `pick_detail_source()`, função pura, sem efeito colateral |
-| Posições 1, 2, 3, 5 | 🔲 não implementadas — o pipeline de produção continua como está |
+| Posição 1 — variante de capa sob demanda | ✅ disponível sob demanda (Frente A): `POST /api/v1/listings/{id}/images/cover-ai-variant` gera o candidato `cover_ai`; `POST /api/v1/listings/{id}/images/{image_id}/promote-cover` decide qual imagem (`cover_deterministic` ou `cover_ai`) ocupa a capa publicada. Pipeline automático continua produzindo só a capa determinística. |
+| Posição 5 — ficha técnica sob demanda | ✅ disponível sob demanda (Frente B): `POST /api/v1/listings/{id}/images/specs-ai-variant` gera o candidato `specs_ai`, renderizado por IA a partir dos bytes salvos da capa determinística, para comparação A/B com o `card_specs` (Pillow) já produzido pelo pipeline. Nunca substitui o `card_specs` automaticamente. |
+| Posições 2, 3 | 🔲 não implementadas — o pipeline de produção continua como está |
 
 ### Isolamento em relação à produção
 

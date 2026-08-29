@@ -310,7 +310,9 @@ class ListingService:
             await self.db.commit()
             _redispatch(listing)
 
-    async def approve_images(self, listing: Listing, approved_ids: list[UUID]) -> None:
+    async def approve_images(
+        self, listing: Listing, approved_ids: list[UUID], review_seconds: int | None = None
+    ) -> None:
         if listing.status != "pending_image_approval":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -335,6 +337,8 @@ class ListingService:
                 img.approved = True
                 img.sort_order = order_map[img.id]
                 img.status = "approved"
+                if review_seconds is not None:
+                    img.review_seconds = review_seconds
                 if img.ml_picture_id:
                     approved_ml_ids.append(img.ml_picture_id)
             else:

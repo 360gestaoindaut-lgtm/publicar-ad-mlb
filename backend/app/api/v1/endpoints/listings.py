@@ -203,7 +203,7 @@ async def approve_images(
 ):
     svc = ListingService(db)
     listing = await svc.get_or_404(listing_id, active_seller.id)
-    await svc.approve_images(listing, body.approved_ids)
+    await svc.approve_images(listing, body.approved_ids, body.review_seconds)
     return ListingSummary.model_validate(listing)
 
 
@@ -304,3 +304,37 @@ async def promote_cover(
     listing = await svc.get_or_404(listing_id, active_seller.id)
     await _promote_cover(db, listing, image_id)
     return ListingSummary.model_validate(listing)
+
+
+@router.post("/{listing_id}/images/specs-ai-variant", response_model=ImageOut, status_code=201)
+async def generate_specs_ai_variant(
+    listing_id: UUID,
+    active_seller=Depends(get_active_seller),
+    db: AsyncSession = Depends(get_db),
+):
+    """Gera sob demanda a ficha tecnica renderizada por IA (Frente B).
+
+    Candidato para comparação A/B com o `card_specs` (Pillow) já produzido
+    pelo pipeline — nasce não aprovado (`approved=False`) e nunca substitui o
+    `card_specs` automaticamente. Um humano compara os dois e decide.
+    """
+    from app.services.image_engines.base import ImageEngineUnavailableError
+    from app.services.publish_service import get_valid_access_token
+    from app.services.specs_variant_service import SpecsVariantError, generate_specs_variant
+
+    svc = ListingService(db)
+    listing = await svc.get_or_404(listing_id, active_seller.id)
+    access_token = await get_valid_access_token(active_seller, db)
+    try:
+        candidate = await generate_specs_variant(db, listing, access_token)
+    except SpecsVariantError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ImageEngineUnavailableError as exc:
+        # 502, não 500: mesma semântica do endpoint de variante de capa — o
+        # provedor externo (OpenAI) falhou, não este serviço. Nenhuma
+        # ListingImage chega a ser gravada neste caminho.
+        raise HTTPException(
+            status_code=502,
+            detail=f"Motor de imagem indisponível no momento — tente novamente em instantes. ({exc})",
+        )
+    return ImageOut.model_validate(candidate)
