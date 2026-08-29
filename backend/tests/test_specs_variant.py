@@ -105,6 +105,38 @@ class TestGenerateSpecsVariantSuccess:
         assert "Bullet 2" in prompt
 
 
+class TestGenerateSpecsVariantMissingCoverBytes:
+    @pytest.mark.asyncio
+    async def test_cover_without_saved_bytes_raises_and_never_calls_engine(self):
+        """Mesma propriedade cobrada em `test_cover_variant.py` para o
+        servico irmao: uma chamada que nao pode ter sucesso (capa sem bytes
+        salvos) nao pode chegar a instanciar um motor pago. O guard fica
+        ANTES de `generate_card_copy` e de `OpenAIEditEngine`, entao nenhum
+        dos dois deve ser tocado."""
+        from app.services.specs_variant_service import (
+            SpecsVariantError,
+            generate_specs_variant,
+        )
+
+        listing = _make_listing()
+        cover = _make_cover(listing.id, image_bytes=None)
+        mock_db = _make_db(cover)
+
+        with patch(
+            "app.services.image_card_copy_service.generate_card_copy",
+            new_callable=AsyncMock,
+        ) as mock_generate_copy, patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls:
+            with pytest.raises(SpecsVariantError):
+                await generate_specs_variant(mock_db, listing, "token-xyz")
+
+        mock_generate_copy.assert_not_called()
+        mock_engine_cls.assert_not_called()
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_not_awaited()
+
+
 class TestGenerateSpecsVariantPreservesPillowCard:
     @pytest.mark.asyncio
     async def test_existing_card_specs_row_stays_untouched(self):

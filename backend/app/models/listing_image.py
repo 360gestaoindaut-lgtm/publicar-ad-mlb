@@ -26,12 +26,15 @@ class ListingImage(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    # Bytes exatos que subiram para o ML, guardados para que a variante de capa
-    # parta do MESMO arquivo publicado — nao de uma re-derivacao. Re-derivar seria
+    # Bytes exatos que subiram para o ML, guardados para que variantes por IA
+    # partam do MESMO arquivo publicado — nao de uma re-derivacao. Re-derivar seria
     # identico enquanto a foto bruta nao mudasse, mas o seller PODE trocar a foto
     # (aconteceu com 37-2.jpg), e ai a variante sairia de uma imagem diferente da
     # que esta no anuncio, sem ninguem perceber. Nullable, sem backfill: registros
-    # antigos ficam com NULL, e so a capa deterministica popula esta coluna hoje.
+    # antigos ficam com NULL. Hoje populam esta coluna: `cover_deterministic`
+    # (sempre), `cover_ai` e `specs_ai` (candidatos por IA, quando o upload
+    # da variante tem sucesso) — nao populam: `individual`, `card_benefits`,
+    # `card_usage`, `card_specs`.
     image_bytes: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
 
     # Tempo que um humano levou conferindo a versao gerada por IA contra o dado
