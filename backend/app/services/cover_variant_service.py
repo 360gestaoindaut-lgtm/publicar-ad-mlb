@@ -62,20 +62,14 @@ async def generate_cover_variant(db, listing, access_token: str) -> ListingImage
         _resolve_requires_white_bg,
     )
 
-    # `.first()` em vez de `scalar_one_or_none()`: um listing com pipeline
-    # reprocessado (retry) pode, em tese, acumular mais de uma linha
-    # cover_deterministic — pegar a mais recente não quebra em vez de levantar
-    # MultipleResultsFound por uma condição de dado alheia a esta feature.
     cover = (
         await db.execute(
-            select(ListingImage)
-            .where(
+            select(ListingImage).where(
                 ListingImage.listing_id == listing.id,
                 ListingImage.kind == "cover_deterministic",
             )
-            .order_by(ListingImage.created_at.desc())
         )
-    ).scalars().first()
+    ).scalar_one_or_none()
 
     if cover is None or cover.image_bytes is None:
         raise CoverVariantError(

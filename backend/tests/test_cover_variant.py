@@ -16,7 +16,7 @@ def _make_db(cover_image):
     """AsyncMock de sessão cuja primeira (e única) query devolve `cover_image`."""
     mock_db = AsyncMock()
     mock_result = MagicMock()
-    mock_result.scalars.return_value.first.return_value = cover_image
+    mock_result.scalar_one_or_none.return_value = cover_image
     mock_db.execute = AsyncMock(return_value=mock_result)
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()
@@ -186,6 +186,50 @@ class TestGenerateCoverVariantQaRejection:
         assert candidate.approved is False
         assert candidate.ml_picture_id is None
         mock_ml_cls.return_value.upload.assert_not_awaited()
+
+
+class TestCoverAiVariantEndpointEngineUnavailable:
+    """Fix round 1: ImageEngineUnavailableError não pode virar 500 genérico.
+
+    Testa o endpoint de verdade (não uma reimplementação da regra), chamando
+    a função da rota diretamente com os Depends() substituídos por mocks —
+    mesma técnica usada para as tasks Celery em test_image_tasks.py, sem
+    precisar de TestClient/DB real (padrão inexistente hoje na suíte).
+    """
+
+    @pytest.mark.asyncio
+    async def test_engine_unavailable_maps_to_502_with_actionable_message_and_no_row_saved(self):
+        from fastapi import HTTPException
+
+        from app.api.v1.endpoints.listings import generate_cover_ai_variant
+        from app.services.image_engines.base import ImageEngineUnavailableError
+
+        listing = _make_listing()
+        active_seller = MagicMock()
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock()
+
+        with patch(
+            "app.services.listing_service.ListingService.get_or_404",
+            new_callable=AsyncMock,
+            return_value=listing,
+        ), patch(
+            "app.services.publish_service.get_valid_access_token",
+            new_callable=AsyncMock,
+            return_value="token-xyz",
+        ), patch(
+            "app.services.cover_variant_service.generate_cover_variant",
+            new_callable=AsyncMock,
+            side_effect=ImageEngineUnavailableError("Timeout ao chamar a OpenAI (edits): boom"),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await generate_cover_ai_variant(
+                    listing_id=listing.id, active_seller=active_seller, db=mock_db
+                )
+
+        assert exc_info.value.status_code == 502, "nao pode cair no handler generico (500)"
+        assert "indispon" in exc_info.value.detail.lower()
+        mock_db.add.assert_not_called()
 
 
 class TestGenerateCoverVariantPrompt:

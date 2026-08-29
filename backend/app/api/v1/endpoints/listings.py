@@ -257,6 +257,7 @@ async def generate_cover_ai_variant(
     automaticamente. Um humano revisa e decide se promove (Frente B).
     """
     from app.services.cover_variant_service import CoverVariantError, generate_cover_variant
+    from app.services.image_engines.base import ImageEngineUnavailableError
     from app.services.publish_service import get_valid_access_token
 
     svc = ListingService(db)
@@ -266,4 +267,16 @@ async def generate_cover_ai_variant(
         candidate = await generate_cover_variant(db, listing, access_token)
     except CoverVariantError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except ImageEngineUnavailableError as exc:
+        # 502, não 500: quem falhou foi um provedor externo (OpenAI) que este
+        # endpoint expõe como gateway — mesmo status usado em publish_service.py
+        # para falhas da API do ML. Condição transiente e retryable: o
+        # operador clicou num botão pago e precisa saber que pode tentar de
+        # novo, não que o endpoint está quebrado. Nenhuma ListingImage chega a
+        # ser gravada neste caminho — a falha acontece antes de qualquer
+        # db.add() no serviço.
+        raise HTTPException(
+            status_code=502,
+            detail=f"Motor de imagem indisponível no momento — tente novamente em instantes. ({exc})",
+        )
     return ImageOut.model_validate(candidate)
