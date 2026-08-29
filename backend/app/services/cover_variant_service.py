@@ -12,15 +12,21 @@ bruta — o seller pode ter trocado a foto depois, e nesse caso a variante
 precisa continuar fiel ao que está publicado, não ao que está no bucket hoje.
 """
 import logging
+from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.models.listing_image import ListingImage
 
 logger = logging.getLogger(__name__)
 
+COVER_DETERMINISTIC_KIND = "cover_deterministic"
 COVER_AI_KIND = "cover_ai"
 COVER_AI_SORT_ORDER = 90  # fora da faixa 0..N da galeria
+COVER_SORT_ORDER = 0
+
+_PROMOTABLE_KINDS = {COVER_DETERMINISTIC_KIND, COVER_AI_KIND}
 
 
 class CoverVariantError(RuntimeError):
@@ -66,7 +72,7 @@ async def generate_cover_variant(db, listing, access_token: str) -> ListingImage
         await db.execute(
             select(ListingImage).where(
                 ListingImage.listing_id == listing.id,
-                ListingImage.kind == "cover_deterministic",
+                ListingImage.kind == COVER_DETERMINISTIC_KIND,
             )
         )
     ).scalar_one_or_none()
@@ -119,3 +125,68 @@ async def generate_cover_variant(db, listing, access_token: str) -> ListingImage
     await db.commit()
     logger.info("cover_variant listing_id=%s result=uploaded", listing.id)
     return candidate
+
+
+async def promote_cover(db, listing, image_id: UUID) -> None:
+    """Troca qual imagem ocupa sort_order=0 na galeria (Frente B).
+
+    A imagem alvo precisa ser deste anuncio e ter `kind` em
+    `{"cover_deterministic", "cover_ai"}` — senao 422 (ex.: tentar promover
+    uma foto `individual` ou de `card`). Se o `image_id` nao pertencer a este
+    anuncio, 404 (mesma semantica de "nao encontrado" usada em
+    `ListingService.get_or_404`).
+
+    A imagem promovida passa a `approved=True, sort_order=0`. A capa que
+    estava em `sort_order=0` volta a ser candidata (`approved=False,
+    sort_order=COVER_AI_SORT_ORDER`) — nunca e apagada, so troca de lugar,
+    pra o operador poder promover de volta depois. As demais imagens da
+    galeria (individuais, cards) nao sao tocadas.
+
+    Idempotente: promover quem ja esta em sort_order=0 e um no-op (retorna
+    sem escrever no banco) — nao duplica nem apaga a propria capa atual.
+    """
+    target = (
+        await db.execute(
+            select(ListingImage).where(
+                ListingImage.id == image_id,
+                ListingImage.listing_id == listing.id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if target is None:
+        raise HTTPException(status_code=404, detail="Imagem nao encontrada neste anuncio")
+
+    if target.kind not in _PROMOTABLE_KINDS:
+        raise HTTPException(
+            status_code=422,
+            detail="Somente a capa deterministica ou a variante gerada por IA podem ser promovidas a capa",
+        )
+
+    if target.sort_order == COVER_SORT_ORDER:
+        # Ja e a capa atual — idempotente, nada a fazer.
+        return
+
+    current_cover = (
+        await db.execute(
+            select(ListingImage).where(
+                ListingImage.listing_id == listing.id,
+                ListingImage.sort_order == COVER_SORT_ORDER,
+            )
+        )
+    ).scalar_one_or_none()
+
+    target.approved = True
+    target.sort_order = COVER_SORT_ORDER
+
+    if current_cover is not None:
+        current_cover.approved = False
+        current_cover.sort_order = COVER_AI_SORT_ORDER
+
+    await db.commit()
+    logger.info(
+        "cover_promote listing_id=%s promoted_id=%s demoted_id=%s",
+        listing.id,
+        target.id,
+        current_cover.id if current_cover is not None else None,
+    )

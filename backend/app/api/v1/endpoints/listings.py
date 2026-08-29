@@ -280,3 +280,26 @@ async def generate_cover_ai_variant(
             detail=f"Motor de imagem indisponível no momento — tente novamente em instantes. ({exc})",
         )
     return ImageOut.model_validate(candidate)
+
+
+@router.post("/{listing_id}/images/{image_id}/promote-cover", response_model=ListingSummary)
+async def promote_cover(
+    listing_id: UUID,
+    image_id: UUID,
+    active_seller=Depends(get_active_seller),
+    db: AsyncSession = Depends(get_db),
+):
+    """Decide qual imagem ocupa a capa do anúncio (Frente B).
+
+    A imagem escolhida — capa determinística ou variante IA — assume
+    `sort_order=0` e `approved=True`; a que estava lá volta a ser candidata
+    (`approved=False`, `sort_order=90`), nunca é apagada. O restante da
+    galeria não é tocado. Nada aqui roda automaticamente: só troca de lugar
+    quando um humano chama este endpoint.
+    """
+    from app.services.cover_variant_service import promote_cover as _promote_cover
+
+    svc = ListingService(db)
+    listing = await svc.get_or_404(listing_id, active_seller.id)
+    await _promote_cover(db, listing, image_id)
+    return ListingSummary.model_validate(listing)
