@@ -58,6 +58,30 @@ async def get_root_category_id(category_id: str, token: str | None = None) -> st
     return path[0]["id"] if path else None
 
 
+async def get_category_max_pictures(category_id: str, token: str | None = None) -> int | None:
+    """`settings.max_pictures_per_item` da categoria, ou None se nao der pra saber.
+
+    O ML publica o limite de fotos por categoria em `GET /categories/{id}` —
+    hoje 12 na esmagadora maioria, mas o proprio ML documenta que o valor e
+    por categoria. Devolver None (categoria inexistente, ML fora do ar, campo
+    ausente ou valor absurdo) significa "nao sei": quem chama aplica o teto
+    de seguranca fixo em vez de publicar sem teto nenhum.
+    """
+    if not category_id:
+        return None
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{_ML_API}/categories/{category_id}", headers=headers)
+        resp.raise_for_status()
+        value = (resp.json().get("settings") or {}).get("max_pictures_per_item")
+    except Exception:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
+
+
 async def category_requires_white_background(
     category_id: str, token: str | None = None
 ) -> bool:

@@ -176,3 +176,33 @@ async def test_bulk_publish_transitions_and_dispatches():
 
     assert result.processed == 1
     mock_task.delay.assert_called_once_with(str(listing_id))
+
+
+@pytest.mark.asyncio
+async def test_bulk_approve_images_never_approves_ai_candidates():
+    """`bulk_approve_images` faz um UPDATE em massa por `listing_id`. Sem
+    filtro de `kind` ele aprovaria tambem os candidatos `cover_ai`/`specs_ai`
+    (que nascem `approved=False` e so viram capa por `promote_cover`), e
+    imagem aprovada com `ml_picture_id` entra no payload de publicacao no ML.
+
+    O UPDATE e emitido direto no banco (nao ha objeto ORM em memoria pra
+    inspecionar), entao a asserção é sobre o SQL que a sessão recebeu."""
+    db = AsyncMock()
+    seller_id = uuid.uuid4()
+    listing = make_listing("pending_image_approval", seller_id)
+    statements = []
+
+    async def execute_side(stmt):
+        statements.append(stmt)
+        return MagicMock(scalar_one_or_none=MagicMock(return_value=listing), rowcount=1)
+
+    db.execute = execute_side
+
+    svc = ListingService(db, seller_id)
+    with patch("app.workers.tasks.ai_tasks.generate_description") as mock_task:
+        mock_task.delay = MagicMock()
+        await svc.bulk_approve_images([listing.id])
+
+    update_sql = str(statements[1])
+    assert "UPDATE listing_images" in update_sql, update_sql
+    assert "listing_images.kind NOT IN" in update_sql, update_sql

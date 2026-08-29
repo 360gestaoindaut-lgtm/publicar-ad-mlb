@@ -962,3 +962,83 @@ class TestPromptProibeAlterarTexto:
         # A contradicao antiga: "no text" pedia remover texto enquanto o resto
         # pedia preservar o produto. Agora e "no text overlay".
         assert "no text overlay" in prompt
+
+
+class TestComposedCoverRespectsTheRawPhotoCut:
+    """Finding 5: o corte `[:RAW_PHOTOS_MIN]` faltava SO no ramo da capa
+    composta.
+
+    `fetch_all_raw_photos` descobre todas as fotos brutas disponiveis do SKU
+    (a descoberta foi justamente a Frente que abriu este branch), e cada foto
+    extra entregue ao motor de edicao e custo de IA. O laco das individuais ja
+    corta no minimo obrigatorio; a comprehension da capa composta nao cortava,
+    entao um kit de 5 SKUs com 6 fotos cada mandaria 30 fotos numa unica
+    chamada paga em vez de 10.
+
+    Dormente hoje (`resolve_listing_skus` sempre devolve 1 SKU), mas o teste
+    fixa a regra antes do projeto de kits acordar o ramo.
+    """
+
+    @pytest.mark.asyncio
+    async def test_only_the_first_raw_photos_of_each_sku_reach_the_paid_engine(self):
+        from app.services.seller_image_source_service import RAW_PHOTOS_MIN
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        mock_config = MagicMock()
+        mock_config.raw_base_url = "https://pub-xxx.r2.dev/sku"
+
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_config
+        mock_db.execute = AsyncMock(return_value=mock_result)
+        mock_db.add = MagicMock()
+
+        # 5 fotos por SKU: bem mais que o minimo obrigatorio (2).
+        raw_photos = {
+            "SKU0001": [f"sku1-raw{i}".encode() for i in range(1, 6)],
+            "SKU0002": [f"sku2-raw{i}".encode() for i in range(1, 6)],
+        }
+
+        listing = _make_listing()
+
+        with patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock,
+            return_value=0,
+        ), patch(
+            "app.services.seller_image_source_service.resolve_listing_skus",
+            new_callable=AsyncMock,
+            return_value=["SKU0001", "SKU0002"],
+        ), patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock,
+            return_value=raw_photos,
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=_passthrough_prepare,
+        ), patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(
+                side_effect=[[b"cover"]] + [[b"v1", b"v2"] for _ in range(4)]
+            )
+            mock_ml_cls.return_value.upload = AsyncMock(
+                side_effect=[f"pic{i}" for i in range(1, 20)]
+            )
+            await _try_i2i_generation(mock_db, listing, MagicMock(), "token")
+
+        cover_call = mock_engine_cls.return_value.edit.await_args_list[0]
+        enviadas = cover_call.kwargs["images"]
+
+        assert len(enviadas) == RAW_PHOTOS_MIN * 2, enviadas
+        assert enviadas == [b"sku1-raw1", b"sku1-raw2", b"sku2-raw1", b"sku2-raw2"]
+
+        # E o laco das individuais continua cortando no mesmo minimo:
+        # 1 chamada da capa + 2 fotos x 2 SKUs = 5 chamadas pagas ao todo.
+        assert mock_engine_cls.return_value.edit.await_count == 1 + RAW_PHOTOS_MIN * 2

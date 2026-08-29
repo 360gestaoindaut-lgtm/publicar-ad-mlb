@@ -3,11 +3,12 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 from sqlalchemy import update as sa_update, delete as sa_delete
+from sqlalchemy.orm import defer
 from app.models.listing import Listing
 from app.models.listing_title import ListingTitle
 from app.models.listing_attribute import ListingAttribute
 from app.models.listing_description import ListingDescription
-from app.models.listing_image import ListingImage
+from app.models.listing_image import CANDIDATE_KINDS, ListingImage
 from app.models.listing_job import ListingJob
 from app.models.user import User
 from app.models.seller import Seller
@@ -204,7 +205,9 @@ class ListingService:
         # Se imagens aprovadas e descrição já existem (retry após erro de publicação),
         # pula direto para ready_to_publish sem regenerar tudo.
         approved_img = (await self.db.execute(
-            select(ListingImage).where(
+            select(ListingImage)
+            .options(defer(ListingImage.image_bytes))
+            .where(
                 ListingImage.listing_id == listing.id,
                 ListingImage.approved == True,
             )
@@ -323,8 +326,13 @@ class ListingService:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Pelo menos uma imagem deve ser aprovada",
             )
+        # `defer(image_bytes)`: a aprovacao so mexe em approved/sort_order/
+        # status — carregar o blob de toda a galeria aqui seriam alguns MB
+        # inuteis por chamada.
         result = await self.db.execute(
-            select(ListingImage).where(ListingImage.listing_id == listing.id)
+            select(ListingImage)
+            .options(defer(ListingImage.image_bytes))
+            .where(ListingImage.listing_id == listing.id)
         )
         images = result.scalars().all()
 
@@ -478,9 +486,17 @@ class ListingService:
                 if not listing or listing.status != "pending_image_approval":
                     results.append(BulkItemResult(listing_id=lid, success=False, error="estado inválido"))
                     continue
+                # Candidatos gerados por IA sob demanda (`cover_ai`,
+                # `specs_ai`) ficam de fora: eles nascem `approved=False` de
+                # proposito e so viram capa por acao humana explicita
+                # (`promote_cover`). Aprovar em massa sem este filtro os
+                # colocaria no payload de fotos da publicacao, no ML real.
                 await self.db.execute(
                     sa_update(ListingImage)
-                    .where(ListingImage.listing_id == lid)
+                    .where(
+                        ListingImage.listing_id == lid,
+                        ListingImage.kind.notin_(CANDIDATE_KINDS),
+                    )
                     .values(approved=True)
                     .execution_options(synchronize_session=False)
                 )

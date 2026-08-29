@@ -196,7 +196,17 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
     # pulada, e a 1a imagem individual assume a posição de capa por ordem
     # natural do array `pictures` (sort_order=0).
     if len(skus) > 1:
-        all_raw_photos = [photo for sku in skus for photo in raw_photos_by_sku[sku]]
+        # `[:RAW_PHOTOS_MIN]` pelo MESMO motivo do laco das individuais mais
+        # abaixo: `fetch_all_raw_photos` descobre TODAS as fotos brutas
+        # disponiveis do SKU (podem ser 10), e cada foto extra entregue ao
+        # motor de edicao e custo de IA por anuncio. O consumo continua preso
+        # ao minimo obrigatorio; descobrir mais fotos nunca pode virar gasto
+        # automatico. Hoje `resolve_listing_skus` sempre devolve 1 SKU, entao
+        # este ramo esta dormente — mas era o unico ponto sem o corte, e num
+        # anuncio de kit com 5 SKUs viraria um multiplicador silencioso.
+        all_raw_photos = [
+            photo for sku in skus for photo in raw_photos_by_sku[sku][:RAW_PHOTOS_MIN]
+        ]
         cover_prompt = (
             "Professional e-commerce product photo showing all the items from "
             "the reference images together, composed in a single realistic scene. "
@@ -380,10 +390,11 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
 
 async def _generate_images_async(listing_id: str) -> dict:
     from sqlalchemy import select
+    from sqlalchemy.orm import defer
 
     from app.database import worker_session
     from app.models.listing import Listing
-    from app.models.listing_image import ListingImage
+    from app.models.listing_image import CANDIDATE_KINDS, ListingImage
     from app.models.product_image import ProductImage
     from app.models.seller import Seller
     from app.services.ai.service import get_ai_provider
@@ -447,13 +458,26 @@ async def _generate_images_async(listing_id: str) -> dict:
             if i2i_saved == 0:
                 raise RuntimeError("Nenhuma imagem válida foi gerada pelo motor 'openai_edit'")
             if listing.created_via == "batch":
+                # `kind NOT IN CANDIDATE_KINDS`: um candidato `cover_ai` /
+                # `specs_ai` gerado sob demanda tambem esta em status
+                # "uploaded" e seria varrido por esta aprovacao em massa numa
+                # RE-execucao do pipeline — e imagem aprovada com
+                # ml_picture_id vai direto para o payload de publicacao.
                 images = (await db.execute(
-                    select(ListingImage).where(
+                    select(ListingImage)
+                    .options(defer(ListingImage.image_bytes))
+                    .where(
                         ListingImage.listing_id == listing.id,
                         ListingImage.status == "uploaded",
+                        ListingImage.kind.notin_(CANDIDATE_KINDS),
                     )
                 )).scalars().all()
                 for img in images:
+                    # Guard redundante de proposito (a query ja filtra):
+                    # aprovar um candidato o coloca no payload de publicacao,
+                    # entao a regra vale tambem onde a escrita acontece.
+                    if img.kind in CANDIDATE_KINDS:
+                        continue
                     img.approved = True
                 prod_imgs = (await db.execute(
                     select(ProductImage).where(
@@ -541,14 +565,23 @@ async def _generate_images_async(listing_id: str) -> dict:
             raise RuntimeError(f"Nenhuma imagem válida foi gerada pelo motor '{source_label}'")
 
         if listing.created_via == "batch":
-            # Auto-aprovar todas as imagens geradas e suas entradas no índice SKU→imagem
+            # Auto-aprovar todas as imagens geradas e suas entradas no índice SKU→imagem.
+            # Mesma exclusão de candidatos do ramo i2i acima, pelo mesmo motivo:
+            # `cover_ai`/`specs_ai` também ficam em status "uploaded" e só podem
+            # ser aprovados por ação humana explícita (`promote_cover`).
             images = (await db.execute(
-                select(ListingImage).where(
+                select(ListingImage)
+                .options(defer(ListingImage.image_bytes))
+                .where(
                     ListingImage.listing_id == listing.id,
                     ListingImage.status == "uploaded",
+                    ListingImage.kind.notin_(CANDIDATE_KINDS),
                 )
             )).scalars().all()
             for img in images:
+                # Mesmo guard redundante do ramo i2i, pelo mesmo motivo.
+                if img.kind in CANDIDATE_KINDS:
+                    continue
                 img.approved = True
             if sku:
                 prod_imgs = (await db.execute(
