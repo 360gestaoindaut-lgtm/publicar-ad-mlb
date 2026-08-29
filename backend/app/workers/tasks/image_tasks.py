@@ -131,7 +131,11 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
     from app.models.seller_image_config import SellerImageConfig
     from app.models.listing_image import ListingImage
     from app.models.product_image import ProductImage
-    from app.services.seller_image_source_service import resolve_listing_skus, fetch_all_raw_photos
+    from app.services.seller_image_source_service import (
+        RAW_PHOTOS_MIN,
+        fetch_all_raw_photos,
+        resolve_listing_skus,
+    )
     from app.services.image_engines.openai_edit_engine import OpenAIEditEngine
     from app.services.image_service import MLPictureService
 
@@ -288,7 +292,16 @@ async def _try_i2i_generation(db, listing, seller, access_token: str) -> int | N
     # Imagens individuais — sempre, uma chamada de edição por foto bruta.
     first_individual_bytes: bytes | None = None
     for sku in skus:
-        for raw_photo in raw_photos_by_sku[sku]:
+        # LIMITE DELIBERADO nas 2 primeiras fotos. `fetch_raw_photos` passou a
+        # descobrir ate 10 fotos por SKU, mas isso e insumo do esquema de 5
+        # posicoes (piloto, ver docs/superpowers/specs/esquema-5-posicoes.md),
+        # NAO deste loop.
+        #
+        # Sem o corte, um seller com 5 fotos geraria 10 individuais em vez de 4:
+        # 2.5x o custo de IA, e 1 capa + 10 individuais + 3 cards = 14 imagens,
+        # acima do teto de 12 do ML. Este loop e o pipeline de producao ja
+        # testado e publicando — ele nao muda de comportamento.
+        for raw_photo in raw_photos_by_sku[sku][:RAW_PHOTOS_MIN]:
             variants = await engine.edit(images=[raw_photo], prompt=treatment_prompt, n=2)
             for img_bytes in variants:
                 prepared, verdict = _prepare_image_for_upload(

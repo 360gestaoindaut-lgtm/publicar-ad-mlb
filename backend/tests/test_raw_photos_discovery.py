@@ -110,3 +110,107 @@ class TestDescoberta:
     def test_o_minimo_continua_2(self):
         """Trava contra alguem 'melhorar' o minimo sem perceber o impacto."""
         assert RAW_PHOTOS_MIN == 2
+
+
+class TestFonteDaPosicao4:
+    """Posicao 4 ("Detalhes") do esquema de 5 posicoes.
+
+    Ver docs/superpowers/specs/esquema-5-posicoes.md. A funcao so ESCOLHE a
+    fonte — nao trata, nao recorta, nao chama IA.
+    """
+
+    def test_com_fotos_extras_usa_a_terceira(self):
+        from app.services.seller_image_source_service import pick_detail_source
+
+        foto, veio_de_extra = pick_detail_source([b"f1", b"f2", b"f3", b"f4"])
+
+        assert foto == b"f3", "a regra e simples e documentada: a 3a foto"
+        assert veio_de_extra is True
+
+    def test_com_exatamente_3_fotos_ja_usa_a_terceira(self):
+        from app.services.seller_image_source_service import pick_detail_source
+
+        assert pick_detail_source([b"f1", b"f2", b"f3"]) == (b"f3", True)
+
+    def test_so_o_minimo_cai_no_fallback_e_avisa(self):
+        """Sem extra, o chamador PRECISA saber que e reaproveitamento."""
+        from app.services.seller_image_source_service import pick_detail_source
+
+        foto, veio_de_extra = pick_detail_source([b"f1", b"f2"])
+
+        assert veio_de_extra is False, (
+            "a flag e o que permite ao chamador nao forcar um 'detalhe' que a "
+            "foto nao mostra"
+        )
+        assert foto == b"f2", "a ultima, para nao repetir a fonte da posicao 2"
+
+    def test_nao_usa_foto_que_alimenta_a_posicao_2_quando_ha_extra(self):
+        from app.services.seller_image_source_service import pick_detail_source
+
+        foto, _ = pick_detail_source([b"f1", b"f2", b"f3"])
+
+        assert foto not in (b"f1", b"f2"), (
+            "havendo extra, a posicao 4 nao pode repetir a fonte da posicao 2"
+        )
+
+    def test_lista_vazia_e_erro_de_programacao(self):
+        from app.services.seller_image_source_service import pick_detail_source
+
+        with pytest.raises(ValueError):
+            pick_detail_source([])
+
+
+class TestProducaoNaoConsomeFotosExtras:
+    """O loop de individuais em producao continua limitado ao minimo.
+
+    `fetch_raw_photos` e compartilhada com o piloto e passou a devolver ate 10
+    fotos. Sem o corte, um seller com 5 fotos geraria 10 individuais em vez de
+    4 — 2.5x o custo de IA e 14 imagens contra o teto de 12 do ML.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cinco_fotos_ainda_geram_quatro_individuais(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.services.image_service import ImageValidationResult
+        from app.workers.tasks.image_tasks import _try_i2i_generation
+
+        listing = MagicMock()
+        listing.id = "lid"; listing.seller_id = "sid"
+        listing.sku_external_id = "SKU1"; listing.created_via = "manual"
+
+        db = AsyncMock()
+        cfg = MagicMock(); cfg.raw_base_url = "https://b/x"
+        res = MagicMock(); res.scalar_one_or_none = MagicMock(return_value=cfg)
+        db.execute = AsyncMock(return_value=res); db.add = MagicMock()
+
+        cinco = {"SKU1": [b"f1", b"f2", b"f3", b"f4", b"f5"]}
+
+        with patch(
+            "app.services.seller_image_source_service.fetch_all_raw_photos",
+            new_callable=AsyncMock, return_value=cinco,
+        ), patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock, return_value=False,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            side_effect=lambda b, requires_white_bg: (b, ImageValidationResult(is_valid=True, errors=[])),
+        ), patch(
+            "app.services.image_deterministic_service.try_deterministic_cover",
+            return_value=None,
+        ), patch(
+            "app.workers.tasks.image_tasks._append_benefit_cards",
+            new_callable=AsyncMock, return_value=0,
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as ml_cls:
+            engine_cls.return_value.edit = AsyncMock(return_value=[b"v1", b"v2"])
+            ml_cls.return_value.upload = AsyncMock(side_effect=[f"p{i}" for i in range(20)])
+            salvas = await _try_i2i_generation(db, listing, MagicMock(), "token")
+
+        assert engine_cls.return_value.edit.await_count == 2, (
+            "2 chamadas ao motor (as 2 primeiras fotos), nao 5 — o corte "
+            "[:RAW_PHOTOS_MIN] e o que impede a explosao de custo"
+        )
+        assert salvas == 4, "4 individuais, exatamente como antes da descoberta"

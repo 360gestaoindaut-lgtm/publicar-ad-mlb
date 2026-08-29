@@ -80,3 +80,35 @@ async def fetch_all_raw_photos(raw_base_url: str, skus: list[str]) -> dict[str, 
             return None
         result[sku] = photos
     return result
+
+
+# Posição 4 do esquema de 5 posições — "Detalhes".
+# Ver docs/superpowers/specs/esquema-5-posicoes.md.
+#
+# Regra deliberadamente simples: a 3ª foto, se existir. Não há heurística de
+# "qual extra é a melhor para detalhe" e não deve haver por ora — decidir isso
+# sem dado real de quantos sellers têm 3+ fotos seria inventar critério. É
+# revisitável quando esse dado existir.
+DETAIL_SOURCE_INDEX = 2  # 0-based: a 3ª foto
+
+
+def pick_detail_source(photos: list[bytes]) -> tuple[bytes, bool]:
+    """Escolhe a foto de origem da posição 4 ("Detalhes").
+
+    Devolve `(foto, veio_de_extra)`. O segundo elemento importa: `True`
+    significa fonte dedicada (uma foto que o seller subiu além do mínimo e que
+    NÃO alimenta a posição 2); `False` significa que só existem as 2 mínimas e
+    estamos reaproveitando — o chamador pode decidir tratar diferente, ou até
+    pular a posição 4, em vez de forçar um "detalhe" que a foto não mostra.
+
+    Não faz zoom nem recorte: só seleciona a fonte. O tratamento é do chamador.
+    """
+    if not photos:
+        raise ValueError("pick_detail_source exige ao menos uma foto")
+
+    if len(photos) > DETAIL_SOURCE_INDEX:
+        return photos[DETAIL_SOURCE_INDEX], True
+
+    # Só o mínimo: usa a última disponível. A posição 2 tende a sair da 1ª, então
+    # pegar a última evita que as duas posições mostrem exatamente a mesma foto.
+    return photos[-1], False
