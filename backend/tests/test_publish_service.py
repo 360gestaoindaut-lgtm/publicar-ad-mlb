@@ -23,6 +23,26 @@ def _image():
     return img
 
 
+def _sem_teto_de_categoria():
+    """Neutraliza a consulta do teto de fotos da categoria.
+
+    `publish()` pergunta ao ML o `max_pictures_per_item` da categoria antes de
+    montar o payload. Os testes desta classe mockam `httpx.AsyncClient`
+    inteiro, entao esse GET cai no MESMO mock: `resp.raise_for_status()` sobre
+    um AsyncMock devolve uma corrotina que ninguem aguarda (RuntimeWarning) e
+    a chamada ainda polui a contagem de requests do cliente. Devolver None faz
+    o `publish()` cair no teto fixo — exatamente o que acontece em producao
+    quando o ML nao responde. O teto tem cobertura propria em
+    `TestPublishPicsPayloadCap` (test_publish_service.py); aqui ele nao e o
+    assunto.
+    """
+    return patch(
+        "app.services.category_service.get_category_max_pictures",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+
+
 class TestPublishEnsuresPaused:
     @pytest.mark.asyncio
     async def test_forces_pause_when_ml_activates_immediately(self):
@@ -38,7 +58,7 @@ class TestPublishEnsuresPaused:
         mock_post = AsyncMock(return_value=create_response)
         mock_put = AsyncMock(return_value=put_response)
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
+        with patch("httpx.AsyncClient") as mock_client_cls, _sem_teto_de_categoria():
             client = mock_client_cls.return_value.__aenter__.return_value
             client.post = mock_post
             client.put = mock_put
@@ -66,7 +86,7 @@ class TestPublishEnsuresPaused:
         mock_post = AsyncMock(return_value=create_response)
         mock_put = AsyncMock()
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
+        with patch("httpx.AsyncClient") as mock_client_cls, _sem_teto_de_categoria():
             client = mock_client_cls.return_value.__aenter__.return_value
             client.post = mock_post
             client.put = mock_put
@@ -104,16 +124,8 @@ class TestPublishEnsuresPaused:
         mock_get = AsyncMock(return_value=get_response)
         mock_put = AsyncMock(return_value=put_response)
 
-        # `get_category_max_pictures` também faz um GET (no /categories/{id})
-        # e cairia neste mesmo mock, poluindo a contagem de `mock_get`. Este
-        # teste é sobre o polling do sub_status, não sobre o teto de fotos —
-        # o teto tem cobertura própria em `TestPublishPicsPayloadCap`.
         with patch("httpx.AsyncClient") as mock_client_cls, \
-             patch(
-                 "app.services.category_service.get_category_max_pictures",
-                 new_callable=AsyncMock,
-                 return_value=None,
-             ), \
+             _sem_teto_de_categoria(), \
              patch("app.services.publish_service.asyncio.sleep", new_callable=AsyncMock):
             client = mock_client_cls.return_value.__aenter__.return_value
             client.post = mock_post
