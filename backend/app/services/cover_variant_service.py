@@ -21,6 +21,7 @@ from sqlalchemy.orm import defer
 from app.models.listing_image import (
     COVER_AI_KIND,
     COVER_DETERMINISTIC_KIND,
+    COVER_SORT_ORDER,
     PROMOTABLE_COVER_KINDS,
     ListingImage,
 )
@@ -28,9 +29,10 @@ from app.models.listing_image import (
 logger = logging.getLogger(__name__)
 
 COVER_AI_SORT_ORDER = 90  # fora da faixa 0..N da galeria
-COVER_SORT_ORDER = 0
 
-# Reexportado do model para nao duplicar as strings do vocabulario de `kind`.
+# Reexportados do model para nao duplicar o vocabulario de `kind` nem a
+# constante da posicao de capa. `COVER_SORT_ORDER` continua importavel daqui
+# porque testes e call sites deste servico ja o referenciam por este caminho.
 _PROMOTABLE_KINDS = PROMOTABLE_COVER_KINDS
 
 
@@ -174,13 +176,18 @@ async def promote_cover(db, listing, image_id: UUID) -> None:
     depois. As demais imagens da galeria (individuais, cards) nao sao
     tocadas.
 
-    O filtro por `kind` no rebaixamento NAO e cosmetico: `sort_order=0` nao
-    e exclusividade das capas. `ListingService.approve_images` reatribui
-    `sort_order` pela ordem de `approved_ids`, entao a PRIMEIRA imagem
-    aprovada pelo operador fica em 0 — e ela costuma ser uma `individual`.
-    Sem o filtro, promover uma `cover_ai` rebaixaria essa foto para
-    `approved=False, sort_order=90`, removendo silenciosamente do anuncio
-    uma foto que ja esta publicada.
+    O filtro por `kind` no rebaixamento NAO e cosmetico: sem ele, promover
+    uma `cover_ai` rebaixaria para `approved=False, sort_order=90` qualquer
+    foto que estivesse em 0, removendo silenciosamente do anuncio uma foto ja
+    publicada que o operador aprovou.
+
+    O filtro sozinho, porem, nao bastava: enquanto `approve_images` podia por
+    uma `individual` em 0, restringir o rebaixamento deixava DUAS linhas
+    empatadas em `sort_order=0` depois da promocao, e `publish_service` ordena
+    por `sort_order` sem desempate — a capa publicada virava sorteio, ou seja,
+    a promocao podia ficar inerte. Por isso `approve_images` RESERVA a posicao
+    0 a kinds de capa (ver `PROMOTABLE_COVER_KINDS` no model). As duas metades
+    se sustentam mutuamente: afrouxar qualquer uma reabre um dos dois defeitos.
 
     Alem do filtro na query, o laco confere o `kind` de cada linha antes de
     escrever: rebaixar e uma escrita destrutiva (despublica uma foto), entao
@@ -203,6 +210,20 @@ async def promote_cover(db, listing, image_id: UUID) -> None:
 
     Idempotente: promover quem ja esta em sort_order=0 e sem duplicatas para
     rebaixar e um no-op (nao escreve no banco).
+
+    LIMITACAO CONHECIDA — nao fechada de proposito nesta branch de piloto:
+    o `with_for_update()` acima so serializa promocoes que disputem AS MESMAS
+    linhas. Duas promocoes simultaneas de ALVOS DIFERENTES no mesmo anuncio
+    (duas abas escolhendo capas distintas) travam linhas disjuntas: cada
+    transacao le a lista de rebaixaveis antes da outra escrever, nenhuma
+    enxerga o alvo da outra, e ambas terminam em `sort_order=0`. O efeito e
+    o mesmo empate descrito acima, agora por corrida em vez de por numeracao.
+    Mitigacoes ja em vigor: a janela e de milissegundos, exige acao humana
+    concorrente no mesmo anuncio, e o estado se autocura — a proxima promocao
+    rebaixa a lista inteira e volta ao estado correto. O fim real exige um
+    indice unico parcial (`UNIQUE (listing_id) WHERE sort_order = 0 AND kind
+    IN (...)`) via migration, que nao se justifica antes de o piloto ser
+    aprovado. Ver `docs/superpowers/specs/esquema-5-posicoes.md`.
     """
     target = (
         await db.execute(

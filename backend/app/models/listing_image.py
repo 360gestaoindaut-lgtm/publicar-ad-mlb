@@ -17,10 +17,24 @@ COVER_DETERMINISTIC_KIND = "cover_deterministic"
 COVER_AI_KIND = "cover_ai"
 SPECS_AI_KIND = "specs_ai"
 
-# Unicos kinds que podem ocupar sort_order=0. `promote_cover` valida o alvo
-# contra este conjunto E restringe a ele o rebaixamento: uma foto `individual`
-# aprovada pelo operador como capa (approve_images atribui sort_order=0 a
-# primeira da lista) jamais pode ser despublicada por uma promocao de capa.
+# A posicao de capa na galeria. Mora aqui junto do vocabulario de `kind`
+# porque a regra "quem pode ocupar esta posicao" e do dominio, nao de um
+# servico: `listing_service.approve_images` (que numera) e
+# `cover_variant_service.promote_cover` (que troca) precisam concordar.
+COVER_SORT_ORDER = 0
+
+# Unicos kinds que podem ocupar `COVER_SORT_ORDER`. O conjunto e usado em dois
+# lugares que TEM de concordar:
+#
+#   - `promote_cover` valida o alvo contra ele E restringe a ele o
+#     rebaixamento, para nunca despublicar uma foto que nao seja capa;
+#   - `approve_images` reserva a posicao 0 a estes kinds ao renumerar.
+#
+# A segunda parte e o que torna a primeira suficiente. Enquanto `approve_images`
+# podia por uma `individual` em 0, o rebaixamento restrito deixava DUAS linhas
+# empatadas em 0 depois de uma promocao, e `publish_service` ordena por
+# `sort_order` sem desempate — a capa publicada virava sorteio. Afrouxar
+# qualquer um dos dois lados reabre isso.
 PROMOTABLE_COVER_KINDS = frozenset({COVER_DETERMINISTIC_KIND, COVER_AI_KIND})
 
 # Candidatos gerados por IA SOB DEMANDA (Frentes A e B). Nascem

@@ -40,6 +40,43 @@ verdade até decisão explícita de substituição.
 | Posição 5 — ficha técnica sob demanda | ✅ disponível sob demanda (Frente B): `POST /api/v1/listings/{id}/images/specs-ai-variant` gera o candidato `specs_ai`, renderizado por IA a partir dos bytes salvos da capa determinística, para comparação A/B com o `card_specs` (Pillow) já produzido pelo pipeline. Nunca substitui o `card_specs` automaticamente. |
 | Posições 2, 3 | 🔲 não implementadas — o pipeline de produção continua como está |
 
+### Quem pode ocupar a posição 1 (`sort_order=0`)
+
+A posição de capa é **reservada** a `kind` de capa (`cover_deterministic` ou
+`cover_ai`). Isso é invariante estrutural, garantido em dois pontos que
+precisam concordar:
+
+- `ListingService.approve_images` numera as imagens aprovadas na ordem
+  escolhida pelo operador, mas **pula o 0 se a primeira aprovada não for uma
+  capa** — a numeração começa em 1 e o 0 fica vago até existir uma capa. O 0
+  vago não altera o anúncio: `publish_service` monta o array de fotos
+  ordenando por `sort_order`, e o ML usa a **posição no array**, não o número.
+- `cover_variant_service.promote_cover` rebaixa apenas linhas de kind de capa
+  que estejam em 0, para nunca despublicar uma foto `individual` já aprovada.
+
+**As duas metades se sustentam mutuamente.** Só a segunda (que veio primeiro)
+deixava duas linhas empatadas em `sort_order=0` após uma promoção, e a
+ordenação da publicação não tem critério de desempate — a capa que ia ao ar
+era arbitrária, ou seja, a promoção podia ficar inerte. Afrouxar qualquer um
+dos dois lados reabre um dos dois defeitos.
+
+### Limitação conhecida: corrida entre promoções de alvos diferentes
+
+Aceita como está nesta branch de piloto, **não** é bug desconhecido.
+
+`promote_cover` usa `with_for_update()`, que serializa apenas promoções que
+disputem as mesmas linhas. Duas promoções **simultâneas de alvos diferentes**
+no mesmo anúncio (duas abas escolhendo capas distintas) travam linhas
+disjuntas: cada transação lê a lista de rebaixáveis antes da outra escrever,
+nenhuma enxerga o alvo da outra, e ambas terminam em `sort_order=0`.
+
+- **Janela:** milissegundos, e exige ação humana concorrente no mesmo anúncio.
+- **Autocura:** a promoção seguinte rebaixa a lista inteira e volta ao estado
+  correto — o estado corrompido não é absorvente.
+- **Correção definitiva:** índice único parcial
+  (`UNIQUE (listing_id) WHERE sort_order = 0 AND kind IN (...)`) via migration.
+  Não se justifica antes de o piloto ser aprovado.
+
 ### Isolamento em relação à produção
 
 `fetch_raw_photos` é **compartilhada** entre o piloto e o pipeline de produção.

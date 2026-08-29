@@ -301,10 +301,19 @@ async def promote_cover(
     """Decide qual imagem ocupa a capa do anúncio (Frente A).
 
     A imagem escolhida — capa determinística ou variante IA — assume
-    `sort_order=0` e `approved=True`; a que estava lá volta a ser candidata
-    (`approved=False`, `sort_order=90`), nunca é apagada. O restante da
-    galeria não é tocado. Nada aqui roda automaticamente: só troca de lugar
-    quando um humano chama este endpoint.
+    `sort_order=0` e `approved=True`. **Só linhas de kind de capa** que
+    estejam em `sort_order=0` são rebaixadas a candidatas (`approved=False`,
+    `sort_order=90`); nenhuma é apagada. Fotos `individual` e cards não são
+    tocados nem quando estão em 0, porque rebaixar despublicaria uma foto que
+    o operador já aprovou — e `approve_images` reserva o 0 a kinds de capa
+    justamente para que essa restrição não deixe duas imagens empatadas.
+
+    Alvo de outro kind → 422. Alvo de outro anúncio → 404. Nada aqui roda
+    automaticamente: só troca de lugar quando um humano chama este endpoint.
+
+    Limitação conhecida (aceita no piloto): duas promoções **de alvos
+    diferentes** no mesmo anúncio, simultâneas, podem terminar com as duas em
+    `sort_order=0`. Ver `cover_variant_service.promote_cover`.
     """
     from app.services.cover_variant_service import promote_cover as _promote_cover
 

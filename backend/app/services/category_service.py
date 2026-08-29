@@ -58,6 +58,17 @@ async def get_root_category_id(category_id: str, token: str | None = None) -> st
     return path[0]["id"] if path else None
 
 
+# Teto de sanidade para o valor que vem do ML. O limite real e 12 na
+# esmagadora maioria das categorias, e o proprio ML documenta o campo como
+# "por categoria" — mas aceitar qualquer inteiro positivo significa que uma
+# resposta corrompida, um campo que mude de semantica ou um mock mal montado
+# fariam a publicacao tentar subir centenas de fotos. Acima disto tratamos
+# como "nao sei" e o chamador cai no teto fixo (`ML_MAX_PICTURES_FALLBACK`).
+# 24 = o dobro do limite padrao: folga para uma categoria realmente mais
+# generosa, sem espaco para um valor absurdo passar.
+ML_MAX_PICTURES_SANITY_CAP = 24
+
+
 async def get_category_max_pictures(category_id: str, token: str | None = None) -> int | None:
     """`settings.max_pictures_per_item` da categoria, ou None se nao der pra saber.
 
@@ -77,7 +88,11 @@ async def get_category_max_pictures(category_id: str, token: str | None = None) 
         value = (resp.json().get("settings") or {}).get("max_pictures_per_item")
     except Exception:
         return None
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+    # `isinstance(True, int)` e True em Python — o teste de bool vem primeiro
+    # para que `"max_pictures_per_item": true` nao vire um teto de 1 foto.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < 1 or value > ML_MAX_PICTURES_SANITY_CAP:
         return None
     return value
 

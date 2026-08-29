@@ -8,7 +8,12 @@ from app.models.listing import Listing
 from app.models.listing_title import ListingTitle
 from app.models.listing_attribute import ListingAttribute
 from app.models.listing_description import ListingDescription
-from app.models.listing_image import CANDIDATE_KINDS, ListingImage
+from app.models.listing_image import (
+    CANDIDATE_KINDS,
+    COVER_SORT_ORDER,
+    PROMOTABLE_COVER_KINDS,
+    ListingImage,
+)
 from app.models.listing_job import ListingJob
 from app.models.user import User
 from app.models.seller import Seller
@@ -337,19 +342,46 @@ class ListingService:
         images = result.scalars().all()
 
         approved_set = set(approved_ids)
-        order_map = {uid: i for i, uid in enumerate(approved_ids)}
+        by_id = {img.id: img for img in images}
         approved_ml_ids = []
 
+        # A posicao `COVER_SORT_ORDER` (0) e RESERVADA a kind de capa.
+        #
+        # A ordem relativa que o operador escolheu e preservada; o que muda e
+        # que, se o primeiro aprovado nao for uma capa, a numeracao comeca em 1
+        # e o 0 fica vago ate existir uma capa.
+        #
+        # Isso e invariante estrutural, nao desempate tardio na publicacao.
+        # Enquanto uma `individual` podia cair em 0, promover uma capa deixava
+        # DUAS linhas empatadas em 0 — `promote_cover` so rebaixa kinds de capa,
+        # de proposito, para nunca despublicar foto aprovada — e
+        # `publish_service` ordena por `sort_order` sem criterio de desempate,
+        # entao qual imagem virava a capa do anuncio era arbitrario.
+        #
+        # O 0 vago nao muda o anuncio: `publish_service` monta o array de fotos
+        # ordenando por `sort_order`, e o ML usa a POSICAO no array, nao o
+        # numero. Comecar em 1 publica exatamente a mesma sequencia.
+        #
+        # `dict.fromkeys` deduplica preservando a ordem: id repetido na
+        # requisicao nao pode consumir duas posicoes.
+        next_order = COVER_SORT_ORDER
+        for uid in dict.fromkeys(approved_ids):
+            img = by_id.get(uid)
+            if img is None:
+                continue  # id que nao e deste anuncio: ignorado, como antes
+            if next_order == COVER_SORT_ORDER and img.kind not in PROMOTABLE_COVER_KINDS:
+                next_order = COVER_SORT_ORDER + 1
+            img.approved = True
+            img.sort_order = next_order
+            img.status = "approved"
+            if review_seconds is not None:
+                img.review_seconds = review_seconds
+            if img.ml_picture_id:
+                approved_ml_ids.append(img.ml_picture_id)
+            next_order += 1
+
         for img in images:
-            if img.id in approved_set:
-                img.approved = True
-                img.sort_order = order_map[img.id]
-                img.status = "approved"
-                if review_seconds is not None:
-                    img.review_seconds = review_seconds
-                if img.ml_picture_id:
-                    approved_ml_ids.append(img.ml_picture_id)
-            else:
+            if img.id not in approved_set:
                 img.approved = False
                 img.status = "rejected"
 
