@@ -1,10 +1,49 @@
 from datetime import datetime
 from typing import Optional
 from uuid import uuid4
-from sqlalchemy import Boolean, DateTime, ForeignKey, SmallInteger, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, SmallInteger, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
+
+# --------------------------------------------------------------------------
+# Vocabulario da coluna `kind`. Mora aqui, no model, porque mais de um modulo
+# (services de variante, worker de imagens, listing_service) precisa decidir
+# comportamento a partir do MESMO conjunto de valores — duplicar as strings em
+# cada call site foi exatamente o que permitiu que os dois pontos de aprovacao
+# em massa esquecessem os candidatos.
+# --------------------------------------------------------------------------
+COVER_DETERMINISTIC_KIND = "cover_deterministic"
+COVER_AI_KIND = "cover_ai"
+SPECS_AI_KIND = "specs_ai"
+
+# A posicao de capa na galeria. Mora aqui junto do vocabulario de `kind`
+# porque a regra "quem pode ocupar esta posicao" e do dominio, nao de um
+# servico: `listing_service.approve_images` (que numera) e
+# `cover_variant_service.promote_cover` (que troca) precisam concordar.
+COVER_SORT_ORDER = 0
+
+# Unicos kinds que podem ocupar `COVER_SORT_ORDER`. O conjunto e usado em dois
+# lugares que TEM de concordar:
+#
+#   - `promote_cover` valida o alvo contra ele E restringe a ele o
+#     rebaixamento, para nunca despublicar uma foto que nao seja capa;
+#   - `approve_images` reserva a posicao 0 a estes kinds ao renumerar.
+#
+# A segunda parte e o que torna a primeira suficiente. Enquanto `approve_images`
+# podia por uma `individual` em 0, o rebaixamento restrito deixava DUAS linhas
+# empatadas em 0 depois de uma promocao, e `publish_service` ordena por
+# `sort_order` sem desempate — a capa publicada virava sorteio. Afrouxar
+# qualquer um dos dois lados reabre isso.
+PROMOTABLE_COVER_KINDS = frozenset({COVER_DETERMINISTIC_KIND, COVER_AI_KIND})
+
+# Candidatos gerados por IA SOB DEMANDA (Frentes A e B). Nascem
+# `approved=False` em sort_order 90/91 e so viram capa por acao humana
+# explicita. Toda aprovacao em massa (worker batch, bulk_approve_images) TEM
+# de exclui-los: aprovado + ml_picture_id e o filtro que monta o payload de
+# fotos da publicacao, entao um candidato aprovado por engano vai ao ar no
+# anuncio real.
+CANDIDATE_KINDS = frozenset({COVER_AI_KIND, SPECS_AI_KIND})
 
 
 class ListingImage(Base):
@@ -25,5 +64,20 @@ class ListingImage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    # Bytes exatos que subiram para o ML, guardados para que variantes por IA
+    # partam do MESMO arquivo publicado — nao de uma re-derivacao. Re-derivar seria
+    # identico enquanto a foto bruta nao mudasse, mas o seller PODE trocar a foto
+    # (aconteceu com 37-2.jpg), e ai a variante sairia de uma imagem diferente da
+    # que esta no anuncio, sem ninguem perceber. Nullable, sem backfill: registros
+    # antigos ficam com NULL. Hoje populam esta coluna: `cover_deterministic`
+    # (sempre), `cover_ai` e `specs_ai` (candidatos por IA, quando o upload
+    # da variante tem sucesso) — nao populam: `individual`, `card_benefits`,
+    # `card_usage`, `card_specs`.
+    image_bytes: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+
+    # Tempo que um humano levou conferindo a versao gerada por IA contra o dado
+    # real. Instrumentacao manual, amostra de 10-15 SKUs — nao e analytics.
+    review_seconds: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
 
     listing: Mapped["Listing"] = relationship("Listing", back_populates="images")

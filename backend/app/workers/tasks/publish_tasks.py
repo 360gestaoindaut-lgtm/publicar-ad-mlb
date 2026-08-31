@@ -5,6 +5,7 @@ from app.workers.celery_app import celery_app
 
 async def _publish_listing_async(listing_id: str) -> dict:
     from sqlalchemy import select
+    from sqlalchemy.orm import defer
 
     from app.database import worker_session
     from app.models.listing import Listing
@@ -35,9 +36,12 @@ async def _publish_listing_async(listing_id: str) -> dict:
             )
         ).scalars().all()
 
+        # `defer(image_bytes)`: a publicacao so usa `ml_picture_id` — o blob
+        # (300-600 KB por imagem) nunca e lido aqui.
         images = (
             await db.execute(
                 select(ListingImage)
+                .options(defer(ListingImage.image_bytes))
                 .where(ListingImage.listing_id == listing.id, ListingImage.approved == True)
                 .order_by(ListingImage.sort_order)
             )

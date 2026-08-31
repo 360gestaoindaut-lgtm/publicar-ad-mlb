@@ -116,6 +116,10 @@ class ImageOut(BaseModel):
 
 class ImageApproveRequest(BaseModel):
     approved_ids: list[UUID]
+    # Tempo (segundos) que um humano levou comparando a imagem gerada por IA
+    # contra o dado real antes de aprovar. Opcional: ausente -> fica NULL,
+    # comportamento identico ao de antes deste campo existir.
+    review_seconds: Optional[int] = None
 
 
 class ImageEngineConfirmRequest(BaseModel):

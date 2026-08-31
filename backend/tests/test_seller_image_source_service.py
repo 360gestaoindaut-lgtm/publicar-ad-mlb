@@ -33,9 +33,13 @@ def _mock_response(status_code: int, content: bytes = b"") -> MagicMock:
 class TestFetchRawPhotos:
     @pytest.mark.asyncio
     async def test_returns_both_photos_when_both_exist(self):
+        # A 3a resposta 404 nao e enfeite: a descoberta sonda `-3.jpg` para
+        # saber se o seller tem fotos alem do minimo. Seller com exatamente 2
+        # devolve 404 ali, e e isso que encerra a busca.
         mock_get = AsyncMock(side_effect=[
             _mock_response(200, b"photo1-bytes"),
             _mock_response(200, b"photo2-bytes"),
+            _mock_response(404),
         ])
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client_cls.return_value.__aenter__.return_value.get = mock_get

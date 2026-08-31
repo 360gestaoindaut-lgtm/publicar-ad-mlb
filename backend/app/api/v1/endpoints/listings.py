@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import defer
 from app.core.dependencies import get_db, get_current_user, get_active_seller
 from app.models.listing import Listing
 from app.models.listing_description import ListingDescription
@@ -40,8 +41,15 @@ async def _load_detail(db: AsyncSession, listing: Listing) -> ListingDetail:
         .order_by(ListingAttribute.is_required.desc(), ListingAttribute.attribute_name)
     )).scalars().all()
 
+    # `defer(image_bytes)`: esta rota e polada pela UI a cada 8s e o blob
+    # tem 300-600 KB por imagem (JPEG q92 1200x1200), o que carregaria alguns
+    # MB por request so pra ser descartado — a VPS de producao tem 2 vCPU /
+    # 7.8 GiB sem swap, compartilhada. Nenhum campo de `ListingDetail` usa os
+    # bytes.
     images = (await db.execute(
-        select(ListingImage).where(ListingImage.listing_id == listing.id)
+        select(ListingImage)
+        .options(defer(ListingImage.image_bytes))
+        .where(ListingImage.listing_id == listing.id)
         .order_by(ListingImage.sort_order)
     )).scalars().all()
 
@@ -203,7 +211,7 @@ async def approve_images(
 ):
     svc = ListingService(db)
     listing = await svc.get_or_404(listing_id, active_seller.id)
-    await svc.approve_images(listing, body.approved_ids)
+    await svc.approve_images(listing, body.approved_ids, body.review_seconds)
     return ListingSummary.model_validate(listing)
 
 
@@ -243,3 +251,107 @@ async def activate_listing(
 
     await PublishService(db).activate_listing(listing, seller)
     return {"status": "published"}
+
+
+@router.post("/{listing_id}/images/cover-ai-variant", response_model=ImageOut, status_code=201)
+async def generate_cover_ai_variant(
+    listing_id: UUID,
+    active_seller=Depends(get_active_seller),
+    db: AsyncSession = Depends(get_db),
+):
+    """Gera sob demanda a variante ambientada da capa (Frente A).
+
+    Nasce como candidato não aprovado (`approved=False`) — não muda o anúncio
+    automaticamente. Um humano revisa e decide se promove (`promote_cover`,
+    também Frente A).
+    """
+    from app.services.cover_variant_service import CoverVariantError, generate_cover_variant
+    from app.services.image_engines.base import ImageEngineUnavailableError
+    from app.services.publish_service import get_valid_access_token
+
+    svc = ListingService(db)
+    listing = await svc.get_or_404(listing_id, active_seller.id)
+    access_token = await get_valid_access_token(active_seller, db)
+    try:
+        candidate = await generate_cover_variant(db, listing, access_token)
+    except CoverVariantError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ImageEngineUnavailableError as exc:
+        # 502, não 500: quem falhou foi um provedor externo (OpenAI) que este
+        # endpoint expõe como gateway — mesmo status usado em publish_service.py
+        # para falhas da API do ML. Condição transiente e retryable: o
+        # operador clicou num botão pago e precisa saber que pode tentar de
+        # novo, não que o endpoint está quebrado. Nenhuma ListingImage chega a
+        # ser gravada neste caminho — a falha acontece antes de qualquer
+        # db.add() no serviço.
+        raise HTTPException(
+            status_code=502,
+            detail=f"Motor de imagem indisponível no momento — tente novamente em instantes. ({exc})",
+        )
+    return ImageOut.model_validate(candidate)
+
+
+@router.post("/{listing_id}/images/{image_id}/promote-cover", response_model=ListingSummary)
+async def promote_cover(
+    listing_id: UUID,
+    image_id: UUID,
+    active_seller=Depends(get_active_seller),
+    db: AsyncSession = Depends(get_db),
+):
+    """Decide qual imagem ocupa a capa do anúncio (Frente A).
+
+    A imagem escolhida — capa determinística ou variante IA — assume
+    `sort_order=0` e `approved=True`. **Só linhas de kind de capa** que
+    estejam em `sort_order=0` são rebaixadas a candidatas (`approved=False`,
+    `sort_order=90`); nenhuma é apagada. Fotos `individual` e cards não são
+    tocados nem quando estão em 0, porque rebaixar despublicaria uma foto que
+    o operador já aprovou — e `approve_images` reserva o 0 a kinds de capa
+    justamente para que essa restrição não deixe duas imagens empatadas.
+
+    Alvo de outro kind → 422. Alvo de outro anúncio → 404. Nada aqui roda
+    automaticamente: só troca de lugar quando um humano chama este endpoint.
+
+    Limitação conhecida (aceita no piloto): duas promoções **de alvos
+    diferentes** no mesmo anúncio, simultâneas, podem terminar com as duas em
+    `sort_order=0`. Ver `cover_variant_service.promote_cover`.
+    """
+    from app.services.cover_variant_service import promote_cover as _promote_cover
+
+    svc = ListingService(db)
+    listing = await svc.get_or_404(listing_id, active_seller.id)
+    await _promote_cover(db, listing, image_id)
+    return ListingSummary.model_validate(listing)
+
+
+@router.post("/{listing_id}/images/specs-ai-variant", response_model=ImageOut, status_code=201)
+async def generate_specs_ai_variant(
+    listing_id: UUID,
+    active_seller=Depends(get_active_seller),
+    db: AsyncSession = Depends(get_db),
+):
+    """Gera sob demanda a ficha tecnica renderizada por IA (Frente B).
+
+    Candidato para comparação A/B com o `card_specs` (Pillow) já produzido
+    pelo pipeline — nasce não aprovado (`approved=False`) e nunca substitui o
+    `card_specs` automaticamente. Um humano compara os dois e decide.
+    """
+    from app.services.image_engines.base import ImageEngineUnavailableError
+    from app.services.publish_service import get_valid_access_token
+    from app.services.specs_variant_service import SpecsVariantError, generate_specs_variant
+
+    svc = ListingService(db)
+    listing = await svc.get_or_404(listing_id, active_seller.id)
+    access_token = await get_valid_access_token(active_seller, db)
+    try:
+        candidate = await generate_specs_variant(db, listing, access_token)
+    except SpecsVariantError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ImageEngineUnavailableError as exc:
+        # 502, não 500: mesma semântica do endpoint de variante de capa — o
+        # provedor externo (OpenAI) falhou, não este serviço. Nenhuma
+        # ListingImage chega a ser gravada neste caminho.
+        raise HTTPException(
+            status_code=502,
+            detail=f"Motor de imagem indisponível no momento — tente novamente em instantes. ({exc})",
+        )
+    return ImageOut.model_validate(candidate)

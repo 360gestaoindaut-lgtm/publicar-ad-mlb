@@ -15,6 +15,16 @@ logger = logging.getLogger(__name__)
 ML_ITEMS_URL = "https://api.mercadolibre.com/items"
 ML_TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
 
+# Teto de fotos por anuncio quando o ML nao souber informar o da categoria.
+# 12 e o limite padrao do Mercado Livre (`settings.max_pictures_per_item` em
+# GET /categories/{id}) e o valor observado em todas as categorias usadas por
+# este projeto; e um teto DEFENSIVO, nao uma meta: o pipeline normal produz 6
+# a 8 imagens. Existe porque a lista de fotos aprovadas nunca foi limitada em
+# lugar nenhum — bastaria uma aprovacao em massa mal filtrada, ou uma segunda
+# passada do pipeline, para o payload passar do limite e o ML recusar o item
+# inteiro com um erro de validacao.
+ML_MAX_PICTURES_FALLBACK = 12
+
 
 def _exige_family_name(texto_erro: str) -> bool:
     """True quando o ML recusou o item por falta de `family_name`.
@@ -101,11 +111,31 @@ class PublishService:
             if a.value_name
         ]
 
+        # Teto de fotos: pergunta ao ML o limite DA CATEGORIA e cai no
+        # `ML_MAX_PICTURES_FALLBACK` se a consulta nao responder. A ordenacao
+        # por `sort_order` vem antes do corte de proposito — a capa (0) e as
+        # fotos individuais tem os menores sort_order, entao o que eventualmente
+        # sobra de fora e sempre o material acessorio (cards, candidatos), nunca
+        # a capa.
+        from app.services.category_service import get_category_max_pictures
+
+        max_pictures = (
+            await get_category_max_pictures(listing.ml_category_id)
+        ) or ML_MAX_PICTURES_FALLBACK
+
         pics_payload = [
             {"id": img.ml_picture_id}
             for img in sorted(images, key=lambda x: x.sort_order)
             if img.approved and img.ml_picture_id
         ]
+        if len(pics_payload) > max_pictures:
+            logger.warning(
+                "publish_pics_truncated listing_id=%s total=%s limite=%s",
+                listing.id,
+                len(pics_payload),
+                max_pictures,
+            )
+            pics_payload = pics_payload[:max_pictures]
         if not pics_payload:
             raise RuntimeError("Nenhuma imagem aprovada encontrada para publicação")
 

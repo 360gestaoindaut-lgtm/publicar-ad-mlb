@@ -60,6 +60,26 @@ class TestDeteccaoDeModoCatalogo:
         assert _exige_family_name(None) is False
 
 
+def _sem_teto_de_categoria():
+    """Neutraliza a consulta do teto de fotos da categoria.
+
+    `publish()` pergunta ao ML o `max_pictures_per_item` da categoria antes de
+    montar o payload. Os testes desta classe mockam `httpx.AsyncClient`
+    inteiro, entao esse GET cai no MESMO mock: `resp.raise_for_status()` sobre
+    um AsyncMock devolve uma corrotina que ninguem aguarda (RuntimeWarning) e
+    a chamada ainda polui a contagem de requests do cliente. Devolver None faz
+    o `publish()` cair no teto fixo — exatamente o que acontece em producao
+    quando o ML nao responde. O teto tem cobertura propria em
+    `TestPublishPicsPayloadCap` (test_publish_service.py); aqui ele nao e o
+    assunto.
+    """
+    return patch(
+        "app.services.category_service.get_category_max_pictures",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+
+
 class TestPublicacaoUsaFamilyNameQuandoExigido:
     @pytest.mark.asyncio
     async def test_publica_com_family_name_quando_o_ml_exige(self):
@@ -74,6 +94,7 @@ class TestPublicacaoUsaFamilyNameQuandoExigido:
         ]
 
         with patch("httpx.AsyncClient") as cli, \
+             _sem_teto_de_categoria(), \
              patch.object(PublishService, "_ensure_paused", new_callable=AsyncMock), \
              patch.object(PublishService, "_post_description", new_callable=AsyncMock, create=True):
             client = cli.return_value.__aenter__.return_value
@@ -110,7 +131,9 @@ class TestPublicacaoUsaFamilyNameQuandoExigido:
         svc = PublishService(AsyncMock())
         ok = _resp(201, "{}", {"id": "MLB123", "status": "paused"})
 
-        with patch("httpx.AsyncClient") as cli,              patch.object(PublishService, "_ensure_paused", new_callable=AsyncMock):
+        with patch("httpx.AsyncClient") as cli, \
+             _sem_teto_de_categoria(), \
+             patch.object(PublishService, "_ensure_paused", new_callable=AsyncMock):
             client = cli.return_value.__aenter__.return_value
             client.post = AsyncMock(return_value=ok)
             await svc.publish(_listing(), _attrs(), _imgs(), "<p>desc</p>", "token")
@@ -126,7 +149,7 @@ class TestPublicacaoUsaFamilyNameQuandoExigido:
         from app.services.publish_service import MLValidationError, PublishService
 
         svc = PublishService(AsyncMock())
-        with patch("httpx.AsyncClient") as cli:
+        with patch("httpx.AsyncClient") as cli, _sem_teto_de_categoria():
             client = cli.return_value.__aenter__.return_value
             client.post = AsyncMock(return_value=_resp(400, ERRO_OUTRO))
             with pytest.raises(MLValidationError):

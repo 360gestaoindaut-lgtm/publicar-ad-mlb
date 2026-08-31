@@ -615,3 +615,117 @@ class TestUploadSkipsInvalidImages:
 
         assert saved == 2, "a 2a imagem nao e capa, entao o fundo colorido passa"
         assert [o for o in added if getattr(o, "status", None) == "validation_failed"] == []
+
+
+class TestBatchApprovalNeverApprovesCandidates:
+    """Frentes A/B: `cover_ai` e `specs_ai` nascem `approved=False` e so viram
+    capa por acao humana (`promote_cover`). A aprovacao em massa do ramo batch
+    seleciona por `status == "uploaded"` — que e exatamente o status de um
+    candidato que subiu com sucesso — entao sem filtro de `kind` uma SEGUNDA
+    passada do pipeline (retry, confirm_image_engine) aprovaria o candidato, e
+    imagem aprovada com `ml_picture_id` vai direto para o payload de
+    publicacao no ML real.
+    """
+
+    @staticmethod
+    def _image(kind, status="uploaded"):
+        from app.models.listing_image import ListingImage
+
+        img = ListingImage(kind=kind, status=status, approved=False, sort_order=0)
+        img.ml_picture_id = f"pic-{kind}"
+        return img
+
+    @pytest.mark.asyncio
+    async def test_candidate_handed_over_by_the_session_is_not_approved(self):
+        from app.workers.tasks.image_tasks import _generate_images_async
+
+        listing = MagicMock()
+        listing.status = "generating_images"
+        listing.sku_external_id = None  # pula o reuso por ProductImage
+        listing.seller_id = "sid"
+        listing.created_via = "batch"
+
+        individual = self._image("individual")
+        cover_ai = self._image("cover_ai")
+        specs_ai = self._image("specs_ai")
+
+        statements = []
+
+        async def execute_side(stmt):
+            statements.append(stmt)
+            r = MagicMock()
+            if len(statements) == 1:      # SELECT Listing
+                r.scalar_one = MagicMock(return_value=listing)
+            elif len(statements) == 2:    # SELECT Seller
+                r.scalar_one = MagicMock(return_value=MagicMock())
+            else:                         # SELECT ListingImage (aprovacao em massa)
+                r.scalars.return_value.all.return_value = [individual, cover_ai, specs_ai]
+            return r
+
+        mock_db = AsyncMock()
+        mock_db.execute = execute_side
+        mock_db.commit = AsyncMock()
+
+        with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
+             patch(
+                 "app.workers.tasks.image_tasks._fetch_upload_token",
+                 new_callable=AsyncMock,
+                 return_value="tok",
+             ), \
+             patch(
+                 "app.workers.tasks.image_tasks._try_i2i_generation",
+                 new_callable=AsyncMock,
+                 return_value=4,
+             ):
+            result = await _generate_images_async("listing-id")
+
+        assert result["source"] == "i2i"
+        assert individual.approved is True, "imagem normal do pipeline deve ser aprovada"
+        assert cover_ai.approved is False, "candidato cover_ai nunca pode ser auto-aprovado"
+        assert specs_ai.approved is False, "candidato specs_ai nunca pode ser auto-aprovado"
+
+    @pytest.mark.asyncio
+    async def test_batch_approval_query_excludes_candidate_kinds_in_sql(self):
+        """Complemento do teste acima: o banco nem devolve os candidatos."""
+        from app.workers.tasks.image_tasks import _generate_images_async
+
+        listing = MagicMock()
+        listing.status = "generating_images"
+        listing.sku_external_id = None
+        listing.seller_id = "sid"
+        listing.created_via = "batch"
+
+        statements = []
+
+        async def execute_side(stmt):
+            statements.append(stmt)
+            r = MagicMock()
+            if len(statements) == 1:
+                r.scalar_one = MagicMock(return_value=listing)
+            elif len(statements) == 2:
+                r.scalar_one = MagicMock(return_value=MagicMock())
+            else:
+                r.scalars.return_value.all.return_value = []
+            return r
+
+        mock_db = AsyncMock()
+        mock_db.execute = execute_side
+        mock_db.commit = AsyncMock()
+
+        with patch("app.database.worker_session", lambda: _mock_session(mock_db)), \
+             patch(
+                 "app.workers.tasks.image_tasks._fetch_upload_token",
+                 new_callable=AsyncMock,
+                 return_value="tok",
+             ), \
+             patch(
+                 "app.workers.tasks.image_tasks._try_i2i_generation",
+                 new_callable=AsyncMock,
+                 return_value=4,
+             ):
+            await _generate_images_async("listing-id")
+
+        sql = str(statements[2])
+        assert "listing_images.kind NOT IN" in sql, sql
+        # `defer(image_bytes)` (Finding 6): o blob nao entra nesta query.
+        assert "listing_images.image_bytes" not in sql, sql
