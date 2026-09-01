@@ -104,3 +104,75 @@ contra o teto de **12** do Mercado Livre.
 Por isso aquele loop tem um corte explícito em `[:RAW_PHOTOS_MIN]`. O piloto
 enxerga as fotos extras; a produção não. **Se alguém remover esse corte achando
 que é redundante, reintroduz a explosão de custo e o estouro do teto.**
+
+
+---
+
+## Estado final: as 5 posições são o padrão de PRODUTO ÚNICO
+
+Vale para anúncio de produto único cuja **categoria-folha** tenha perfil
+cadastrado em `image_position_profiles.py`. Hoje: só `MLB6284` (Perfumes),
+perfil `PERFIL_PERFUMARIA`.
+
+| Posição | `kind` | Origem | Entrada |
+|---|---|---|---|
+| 0 | `cover_ai` | IA, prompt leve (fundo branco) | capa determinística |
+| 1 | `presentation` | IA | **todas** as fotos brutas do SKU |
+| 2 | `benefits_ai` | IA, copy do LLM (`card_benefits`) | 1ª foto |
+| 3 | `detail_ai` | IA, legenda fixa do perfil | `pick_detail_source()` |
+| 4 | `specs_ai` | IA, bullets do `value_name` real | capa determinística |
+
+Canvas **1200×1200 quadrado**, vindo de `PositionProfile.canvas` — não de
+constante do worker. É o que permite um perfil futuro (Moda em 4:5) pedir
+outro formato sem tocar na orquestração.
+
+> **Vertical seria destrutivo neste pipeline.** `normalize_to_square`
+> **recorta o centro**, não adiciona borda. Um canvas 3:4 perderia o painel
+> de texto das posições 1–3 — o texto que justifica a existência delas — e
+> ainda passaria no QA, porque `validate_image` não exige quadrado. O ML
+> recomenda 1200×1200 para Beleza e Cuidado Pessoal; o 4:5 é recomendação de
+> Moda/Vestuário.
+
+### Chaveamento por folha, nunca por raiz
+
+A raiz de `MLB6284` é `MLB1246 Beleza e Cuidado Pessoal`, com 13 filhas —
+Maquiagem, Manicure, Farmácia, Depilação. Perfil chaveado na raiz aplicaria
+"Frasco elegante" a esmalte e álcool em gel. Categoria sem perfil **cai no
+pipeline antigo**, e não herda o da irmã nem o da raiz.
+
+`MLB178938` (`Pet Shop > … > Perfumes`, perfume para cães) **não** está
+cadastrada de propósito: vocabulário de atributos próprio, nenhum SKU
+testado, e é a origem do caso "Colônia" documentado no `CLAUDE.md`.
+
+### Revisão humana é obrigatória, sem exceção
+
+As 5 nascem `approved=False`. Categoria com perfil **nunca auto-aprova, nem
+em batch** — `_generate_images_async` checa o perfil antes da varredura de
+aprovação em massa. Sem esse guard o batch aprovaria as posições 1–3 (que
+não são `CANDIDATE_KINDS`) e publicaria um anúncio **sem capa e sem ficha**,
+porque essas duas são candidatas e ficariam de fora.
+
+### Resiliência
+
+Cada posição é independente, com 2 tentativas. Falha em uma não derruba as
+outras. Reprovada no QA, a linha é gravada com os bytes do que a IA produziu
+— candidato existe para alguém julgar.
+
+A capa determinística é calculada mas **não vira linha visível**: serve de
+base para as posições 0 e 4, e só é persistida se a posição 0 por IA falhar
+por completo.
+
+### Kits: inalterados
+
+`len(skus) > 1` continua exatamente como estava. Hoje é inalcançável —
+`resolve_listing_skus` sempre devolve 1 SKU —, mas não foi este trabalho que
+mudou isso. O corte `[:RAW_PHOTOS_MIN]` também segue de pé no caminho antigo;
+ele **não se aplica** às posições 1–3, que são uma chamada só com acesso a
+todas as fotos.
+
+### ⚠️ Fidelidade de texto: mitigação, não garantia
+
+No teste do SKU 38 a posição 0 saiu com `FOR·HER` onde o rótulo original diz
+`FOR HER` — um separador inserido pelo modelo, apesar da cláusula CRITICAL.
+Passou no QA e só apareceu na ampliação lado a lado. É a razão de a revisão
+humana ser obrigatória: o prompt reduz o risco, não o elimina.

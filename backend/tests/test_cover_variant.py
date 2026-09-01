@@ -308,12 +308,11 @@ class TestGenerateCoverVariantPrompt:
 
         prompt = mock_engine_cls.return_value.edit.await_args.kwargs["prompt"]
         assert "CRITICAL" in prompt
-        # Afere a GARANTIA, nao a expressao. O prompt rico dizia
-        # "pixel-faithful" ao lado de uma clausula que manda trocar o fundo e
-        # re-iluminar a cena — pedir e proibir a mesma coisa. A exigencia que
-        # sobrevive e a que importa: nao deformar, nao recolorir, nao
-        # re-proporcionar o corpo do produto.
-        for exigencia in ("do not reshape", "recolor", "re-proportion"):
+        # Afere a GARANTIA, nao a expressao exata. O prompt ativo e o LEVE
+        # (capa branca em toda categoria), cuja clausula de fidelidade lista
+        # as proibicoes em outra ordem — o que nao pode faltar e a exigencia
+        # de nao deformar nem recolorir o corpo do produto.
+        for exigencia in ("reshape", "recolor", "product body"):
             assert exigencia in prompt, prompt
 
 
@@ -428,22 +427,21 @@ class TestCoverLookupWithDuplicateCovers:
         assert "LIMIT" in sql, sql
 
 
-class TestCoverVariantPromptDependsOnCategory:
-    """O prompt da ambientação tem que ser compatível com o QA da categoria.
+class TestCoverSempreBranca:
+    """Capa branca em TODA categoria — a ramificacao foi removida.
 
-    O prompt rico manda trocar o fundo branco por gradiente/textura. Em
-    categoria-raiz que exige fundo branco puro, isso é reprovado por
-    CONSTRUÇÃO pelo `validate_image` — 0% da borda em #FFFFFF contra um
-    mínimo de 90%. Gerar assim queima uma chamada paga num resultado que já
-    se sabe que será rejeitado, toda vez.
+    Antes o servico escolhia entre prompt rico e leve consultando a
+    categoria-raiz. Decisao de produto: capa branca padronizada, sem excecao.
+    O prompt rico continua no modulo, DORMANT, para o toggle por seller.
     """
 
     @staticmethod
-    async def _capture_prompt(requires_white_bg: bool) -> str:
+    async def _capture(requires_white_bg: bool):
+        """`requires_white_bg` aqui e so o valor que a funcao de categoria
+        DEVOLVERIA — o servico nao deve mais consultar nem usar isso."""
         from app.services.cover_variant_service import generate_cover_variant
 
         cover = _make_cover(image_bytes=b"cover-bytes")
-        listing = _make_listing()
         mock_db = _make_db(cover)
         verdict = ImageValidationResult(is_valid=True)
 
@@ -453,112 +451,66 @@ class TestCoverVariantPromptDependsOnCategory:
             "app.workers.tasks.image_tasks._resolve_requires_white_bg",
             new_callable=AsyncMock,
             return_value=requires_white_bg,
-        ), patch(
+        ) as mock_categoria, patch(
             "app.workers.tasks.image_tasks._prepare_image_for_upload",
             return_value=(b"prepared", verdict),
-        ), patch(
+        ) as mock_prepare, patch(
             "app.services.image_service.MLPictureService"
         ) as mock_ml_cls:
             mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"variant"])
             mock_ml_cls.return_value.upload = AsyncMock(return_value="pic-1")
-            await generate_cover_variant(mock_db, listing, "token")
-
-        return mock_engine_cls.return_value.edit.await_args.kwargs["prompt"]
-
-    @pytest.mark.asyncio
-    async def test_white_bg_category_never_asks_for_gradient_or_texture(self):
-        """Mede o PEDIDO, não a palavra: o prompt leve cita "gradients" numa
-        cláusula que os PROÍBE, e proibir é justamente o comportamento certo.
-        O que não pode aparecer é o pedido do prompt rico."""
-        prompt = await self._capture_prompt(requires_white_bg=True)
-        lowered = prompt.lower()
-        assert "replace the flat white background" not in lowered
-        assert "subtle surface texture; add" not in lowered
-        assert "do not add gradients" in lowered
-
-    @pytest.mark.asyncio
-    async def test_white_bg_category_asks_to_preserve_the_white_background(self):
-        prompt = await self._capture_prompt(requires_white_bg=True)
-        lowered = prompt.lower()
-        assert "white background" in lowered
-        # A ambientação permitida vira só luz e sombra de contato.
-        assert "contact shadow" in lowered
-
-    @pytest.mark.asyncio
-    async def test_non_white_bg_category_gets_the_richer_staging(self):
-        """O prompt rico herdou a linguagem visual aprovada nos cards do
-        piloto. Espaco em branco normalizado: a quebra de linha e cosmetica, e
-        sem isso a assercao mediria ONDE a linha quebrou — "radial light"
-        partido ao meio reprovaria um prompt correto."""
-        import re
-
-        prompt = re.sub(
-            r"\s+", " ", await self._capture_prompt(requires_white_bg=False)
-        ).lower()
-
-        assert "colour block sampled from the product itself" in prompt
-        assert "paper-like texture" in prompt
-        assert "radial light" in prompt
-        assert "not flat white" in prompt
-
-    @pytest.mark.asyncio
-    async def test_cover_prompt_forbids_added_text_in_both_variants(self):
-        """A capa e `sort_order=0`, e o ML nao aceita texto nem infografico
-        ali. A proibicao vale para as duas variantes: a rica passou a permitir
-        encenacao mais ousada, e e justamente ai que o motor tende a inventar
-        legenda."""
-        import re
-
-        for wb in (True, False):
-            prompt = re.sub(r"\s+", " ", await self._capture_prompt(requires_white_bg=wb))
-            assert "text" in prompt.lower()
-            assert "logos" in prompt.lower()
-
-    @pytest.mark.asyncio
-    async def test_both_prompts_keep_the_critical_text_clause(self):
-        """A cláusula que protege o texto impresso no produto não pode sumir
-        de nenhuma das duas variantes — é o que impede '100ml' virar '160ml'."""
-        for wb in (True, False):
-            prompt = await self._capture_prompt(requires_white_bg=wb)
-            assert "CRITICAL" in prompt
-            assert "character for" in prompt
-
-    @pytest.mark.asyncio
-    async def test_category_is_consulted_before_the_paid_engine_runs(self):
-        """A consulta de categoria tem que anteceder o motor: é o que
-        transforma a checagem em economia, e não só em correção."""
-        from app.services.cover_variant_service import generate_cover_variant
-
-        ordem: list[str] = []
-
-        async def _fake_requires(listing):
-            ordem.append("categoria")
-            return True
-
-        async def _fake_edit(images, prompt, n):
-            ordem.append("motor")
-            return [b"variant"]
-
-        cover = _make_cover(image_bytes=b"cover-bytes")
-        mock_db = _make_db(cover)
-        verdict = ImageValidationResult(is_valid=True)
-
-        with patch(
-            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
-        ) as mock_engine_cls, patch(
-            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
-            new=_fake_requires,
-        ), patch(
-            "app.workers.tasks.image_tasks._prepare_image_for_upload",
-            return_value=(b"prepared", verdict),
-        ), patch(
-            "app.services.image_service.MLPictureService"
-        ) as mock_ml_cls:
-            mock_engine_cls.return_value.edit = AsyncMock(side_effect=_fake_edit)
-            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic-1")
             await generate_cover_variant(mock_db, _make_listing(), "token")
 
-        assert ordem == ["categoria", "motor"]
+        return (
+            mock_engine_cls.return_value.edit.await_args.kwargs["prompt"],
+            mock_categoria,
+            mock_prepare,
+        )
+
+    @pytest.mark.asyncio
+    async def test_usa_o_prompt_leve_mesmo_em_categoria_sem_fundo_branco(self):
+        """O caso que antes recebia o prompt rico."""
+        prompt, _, _ = await self._capture(requires_white_bg=False)
+        assert "do not add gradients" in prompt.lower()
+        assert "replace the flat white background" not in prompt.lower()
+
+    @pytest.mark.asyncio
+    async def test_qa_exige_branco_mesmo_em_categoria_sem_fundo_branco(self):
+        """Geracao e QA tem de concordar: pedir fundo branco e nao cobrar
+        deixaria o resultado sem verificacao nenhuma."""
+        _, _, mock_prepare = await self._capture(requires_white_bg=False)
+        assert mock_prepare.call_args.kwargs["requires_white_bg"] is True
+
+    @pytest.mark.asyncio
+    async def test_nao_consulta_mais_a_categoria(self):
+        """Sem ramificacao, a consulta vira chamada de rede inutil antes de
+        cada geracao."""
+        _, mock_categoria, _ = await self._capture(requires_white_bg=False)
+        mock_categoria.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_prompt_leve_mantem_a_clausula_critical(self):
+        prompt, _, _ = await self._capture(requires_white_bg=True)
+        assert "CRITICAL" in prompt
+        assert "character for" in prompt
+
+    def test_prompt_rico_continua_no_modulo_dormant(self):
+        """Nao pode ser apagado: e material pronto para o toggle por seller.
+        Se sumir, este teste falha e o motivo fica registrado."""
+        from app.services.cover_variant_service import _COVER_PROMPT_RICH
+
+        assert "colour block sampled from the product itself" in _COVER_PROMPT_RICH
+        assert "CRITICAL" in _COVER_PROMPT_RICH
+
+    def test_pick_prompt_ignora_o_argumento(self):
+        from app.services.cover_variant_service import (
+            _COVER_PROMPT_LIGHT,
+            _pick_prompt,
+        )
+
+        assert _pick_prompt(True) == _COVER_PROMPT_LIGHT
+        assert _pick_prompt(False) == _COVER_PROMPT_LIGHT
+        assert _pick_prompt() == _COVER_PROMPT_LIGHT
 
 
 class TestRejectedCandidateStaysReviewable:
