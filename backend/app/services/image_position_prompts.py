@@ -38,6 +38,13 @@ def build_presentation_prompt(
     `marca` e `volume` sao opcionais: linha ausente e OMITIDA do prompt, em
     vez de virar string vazia. Pedir ao motor para renderizar uma linha vazia
     convida a inventar conteudo para preenche-la.
+
+    A instrucao de TIPOGRAFIA descreve o CONTRASTE entre as tres linhas, nao
+    so o tipo de fonte. A versao anterior dizia apenas "bold, high-contrast,
+    clearly legible sans-serif" e o motor devolvia as tres linhas com peso
+    visual parecido — a hierarquia do rotulo fisico, que e o motivo desta
+    ordem, se perdia na renderizacao. Dizer qual linha domina e qual recua e
+    o que faz o pedido chegar.
     """
     linhas = [f'- Headline: "{nome_produto}"']
     if marca:
@@ -62,7 +69,11 @@ def build_presentation_prompt(
         "Text to render in the lower panel — reproduce EXACTLY as given, do not\n"
         "paraphrase or add any extra line:\n"
         f"{bloco}\n\n"
-        "Typography: bold, high-contrast, clearly legible sans-serif. No other\n"
+        "Typography: geometric sans-serif, clear top-to-bottom hierarchy —\n"
+        "the product name/model leads with the largest, boldest weight; the\n"
+        "brand name below it uses a visibly lighter weight or smaller size,\n"
+        "never matching the headline's visual weight; the volume/measure\n"
+        "line is the smallest and most understated of the three. No other\n"
         "text, logo, badge or border beyond what is specified above."
     )
 
