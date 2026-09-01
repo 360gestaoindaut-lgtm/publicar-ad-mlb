@@ -45,6 +45,28 @@ PROMOTABLE_COVER_KINDS = frozenset({COVER_DETERMINISTIC_KIND, COVER_AI_KIND})
 # anuncio real.
 CANDIDATE_KINDS = frozenset({COVER_AI_KIND, SPECS_AI_KIND})
 
+CARD_SPECS_KIND = "card_specs"
+
+# Kinds que disputam o slot de ficha tecnica na galeria — o Pillow do pipeline
+# e o candidato de IA sob demanda. Usado por `promote_specs` para validar o
+# alvo E para restringir o rebaixamento, exatamente como
+# `PROMOTABLE_COVER_KINDS` faz na capa.
+#
+# DIFERENCA ESTRUTURAL EM RELACAO A CAPA, e o motivo de nao existir um
+# `SPECS_SORT_ORDER` aqui ao lado de `COVER_SORT_ORDER`: a capa tem posicao
+# fixa (0) porque "primeira imagem" e um conceito do dominio. A ficha tecnica
+# nao tem. Os cards recebem `start_sort_order + saved` em `image_tasks.py`, ou
+# seja, a posicao depende de quantas fotos individuais aquele anuncio gerou —
+# 7 no SKU 37, 5 num anuncio com 2 individuais. Cravar um numero aqui mudaria
+# a numeracao da galeria de todo anuncio, inclusive os ja publicados, entao
+# `promote_specs` LE o slot da ficha que ja esta na galeria em vez de impor um.
+PROMOTABLE_SPECS_KINDS = frozenset({CARD_SPECS_KIND, SPECS_AI_KIND})
+
+# Fronteira entre a galeria publicavel e a area de candidatos (90/91). Serve
+# para responder "qual e a ultima posicao da galeria" sem confundir candidato
+# com imagem publicada.
+CANDIDATE_SORT_ORDER_FLOOR = 90
+
 
 class ListingImage(Base):
     __tablename__ = "listing_images"

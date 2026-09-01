@@ -256,3 +256,82 @@ class PublishService:
             )
         if resp.status_code >= 400:
             logger.warning("Falha ao postar descrição para %s: %s", item_id, resp.text[:200])
+
+
+async def fetch_item(item_id: str, access_token: str) -> dict:
+    """Estado atual do item no ML. GET AUTENTICADO.
+
+    A chamada publica a `/items/{id}` passou a devolver 403 — conferir o
+    estado real do anuncio exige o token do seller. Existe como funcao propria
+    porque toda promocao precisa LER o item antes de escrever: os
+    `ml_picture_id` que estao no ar sao a verdade, nao o que o banco acha que
+    esta la.
+    """
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://api.mercadolibre.com/items/{item_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15.0,
+        )
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Erro ao consultar item no ML: {response.text}",
+        )
+    return response.json()
+
+
+async def replace_item_pictures(
+    item_id: str,
+    picture_ids: list[str],
+    access_token: str,
+    must_keep: list[str] | None = None,
+) -> None:
+    """Substitui a lista de fotos de um item JA publicado.
+
+    O PUT de `pictures` no ML e SUBSTITUICAO TOTAL, nao merge: mandar 2 IDs
+    num item de 8 fotos nao troca duas — deixa o anuncio com duas. Toda a
+    validacao abaixo existe por causa disso, porque o erro so aparece no
+    anuncio ao vivo, depois de ja ter apagado foto de verdade.
+
+    - lista vazia -> `ValueError` (apagaria todas as fotos);
+    - ID repetido -> `ValueError` (sintoma de lista mal montada, e publicaria
+      a mesma foto duas vezes ocupando o lugar de outra);
+    - `must_keep` -> `ValueError` nomeando o que sumiu. E o guard de "nenhum
+      ID que deve permanecer pode faltar", conferido AQUI e nao so no call
+      site, para que qualquer promocao futura o herde de graca.
+
+    A ordem da lista e a ordem das fotos no anuncio: `picture_ids[0]` vira a
+    capa.
+    """
+    if not picture_ids:
+        raise ValueError(
+            "lista de fotos vazia: o PUT e substituicao total e apagaria todas as fotos do anuncio"
+        )
+
+    duplicados = {p for p in picture_ids if picture_ids.count(p) > 1}
+    if duplicados:
+        raise ValueError(f"ml_picture_id repetido na lista: {sorted(duplicados)}")
+
+    if must_keep:
+        faltando = [p for p in must_keep if p not in picture_ids]
+        if faltando:
+            raise ValueError(
+                f"lista incompleta — estes ml_picture_id sumiriam do anuncio: {faltando}"
+            )
+
+    async with httpx.AsyncClient() as client:
+        response = await client.put(
+            f"https://api.mercadolibre.com/items/{item_id}",
+            json={"pictures": [{"id": p} for p in picture_ids]},
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=30.0,
+        )
+    if response.status_code not in (200, 204):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Erro ao atualizar fotos no ML: {response.text}",
+        )
+    logger.info(
+        "replace_pictures item_id=%s total=%s", item_id, len(picture_ids)
+    )
