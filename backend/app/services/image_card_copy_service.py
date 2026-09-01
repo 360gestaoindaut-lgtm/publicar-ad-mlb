@@ -179,6 +179,100 @@ def _sanitize_angle(kind: str, raw_angle) -> CardCopy | None:
     return CardCopy(kind=kind, title=title, bullets=bullets)
 
 
+SPECS_CARD_TITLE = "Especificações Técnicas"
+
+# Atributos que existem no anuncio mas nao descrevem o produto na vitrine:
+# identificadores internos, dado fiscal/logistico e o obvio ("Condicao: Novo").
+# Ocupariam um dos 3 bullets no lugar do que o comprador quer ler.
+SPECS_EXCLUDED_ATTRIBUTE_IDS = frozenset({
+    "SELLER_SKU",
+    "GTIN",
+    "EMPTY_GTIN_REASON",
+    "ITEM_CONDITION",
+    "IS_FLAMMABLE",
+    "SELLER_PACKAGE_WEIGHT",
+    "SELLER_PACKAGE_LENGTH",
+    "SELLER_PACKAGE_WIDTH",
+    "SELLER_PACKAGE_HEIGHT",
+})
+
+# Marca e modelo primeiro; o resto entra por ordem alfabetica de
+# `attribute_id`. A ordenacao explicita nao e cosmetica: e o que torna a saida
+# reproduzivel, que e o requisito desta correcao.
+SPECS_PRIORITY_ATTRIBUTE_IDS = ("BRAND", "MODEL")
+
+
+def build_specs_card(attributes: list | None) -> CardCopy | None:
+    """Ficha tecnica montada a partir dos atributos, sem LLM nenhum.
+
+    Ficha tecnica e dado estruturado — o `value_name` do atributo JA e a
+    resposta certa. Deixar o LLM redigir esse texto transformava um dado exato
+    num palpite: no anuncio do SKU 37 o tipo saiu "Desodorante colonia" numa
+    execucao e "Agua de colonia" (o valor real) em outra, com o mesmo prompt.
+    O card Pillow que vai ao ar em todo anuncio consome a mesma funcao, entao
+    o risco nunca foi so do candidato de IA.
+
+    Cada bullet e `"{attribute_name}: {value_name}"`, com o `value_name`
+    LITERAL. Bullet que nao cabe em `MAX_BULLET_CHARS` e DESCARTADO, nunca
+    truncado: meio valor ("Agua de colo") deixa de ser o value_name, e a
+    garantia desta funcao e justamente a exatidao.
+
+    Devolve None quando nao sobram `MIN_BULLETS` — melhor nenhum card do que
+    uma ficha de uma linha so. `card_benefits` e `card_usage` continuam com o
+    LLM: aquilo e narrativa, isto e dado.
+    """
+    candidatos = [
+        a for a in (attributes or [])
+        if getattr(a, "value_name", None)
+        and getattr(a, "attribute_id", None) not in SPECS_EXCLUDED_ATTRIBUTE_IDS
+    ]
+
+    prioridade = {aid: i for i, aid in enumerate(SPECS_PRIORITY_ATTRIBUTE_IDS)}
+    candidatos.sort(
+        key=lambda a: (
+            prioridade.get(a.attribute_id, len(prioridade)),
+            a.attribute_id,
+        )
+    )
+
+    bullets: list[str] = []
+    valores_ja_usados: set[str] = set()
+
+    for attr in candidatos:
+        valor = str(attr.value_name).strip()
+        # Um valor repetido por outro atributo (PERFUME_NAME repetindo MODEL)
+        # gastaria um bullet para dizer a mesma coisa duas vezes, empurrando
+        # para fora um atributo que ainda nao apareceu.
+        if valor.casefold() in valores_ja_usados:
+            continue
+
+        bullet = f"{attr.attribute_name}: {valor}"
+        if len(bullet) > MAX_BULLET_CHARS:
+            continue
+        # O ML proibe certo conteudo dentro da imagem independentemente de quem
+        # escreveu o texto — um valor de atributo nao esta isento da regra.
+        if _banned_reason(bullet) is not None:
+            logger.info(
+                "specs_card attribute_id=%s result=dropped reason=conteudo_proibido",
+                attr.attribute_id,
+            )
+            continue
+
+        bullets.append(bullet)
+        valores_ja_usados.add(valor.casefold())
+        if len(bullets) >= MAX_BULLETS:
+            break
+
+    if len(bullets) < MIN_BULLETS:
+        logger.info(
+            "specs_card result=dropped reason=bullets_insuficientes count=%s",
+            len(bullets),
+        )
+        return None
+
+    return CardCopy(kind="card_specs", title=SPECS_CARD_TITLE, bullets=bullets)
+
+
 async def generate_card_copy(listing, attributes: list | None = None) -> list[CardCopy]:
     """Copy dos 3 cards, na ordem de CARD_KINDS.
 
@@ -213,7 +307,12 @@ async def generate_card_copy(listing, attributes: list | None = None) -> list[Ca
 
     results: list[CardCopy] = []
     for kind in CARD_KINDS:
-        angle = _sanitize_angle(kind, raw.get(_KEY_BY_KIND[kind]))
+        if kind == "card_specs":
+            # Ficha tecnica NAO vem do LLM: o angulo `specs` da resposta e
+            # ignorado de proposito. Ver `build_specs_card`.
+            angle = build_specs_card(attributes)
+        else:
+            angle = _sanitize_angle(kind, raw.get(_KEY_BY_KIND[kind]))
         if angle is not None:
             results.append(angle)
     return results

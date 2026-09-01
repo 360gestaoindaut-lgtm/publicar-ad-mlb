@@ -32,6 +32,24 @@ def _attr(attribute_name: str, value_name: str | None) -> SimpleNamespace:
     return SimpleNamespace(attribute_name=attribute_name, value_name=value_name)
 
 
+def _specs_attributes() -> list[SimpleNamespace]:
+    """Atributos que rendem uma ficha tecnica.
+
+    O `card_specs` deixou de vir do LLM: e montado por `build_specs_card` a
+    partir do `value_name` dos atributos. Testes que esperam os 3 cards
+    precisam fornecer atributos — com a lista vazia o card de specs
+    legitimamente nao existe. Ver `test_specs_card_deterministic.py`.
+    """
+    return [
+        SimpleNamespace(attribute_id="BRAND", attribute_name="Marca",
+                        value_name="Vonder", value_id=None),
+        SimpleNamespace(attribute_id="MODEL", attribute_name="Modelo",
+                        value_name="FI-750", value_id=None),
+        SimpleNamespace(attribute_id="POWER", attribute_name="Potência",
+                        value_name="750 W", value_id="9001"),
+    ]
+
+
 def _well_formed_response() -> dict:
     return {
         "benefits": {
@@ -56,7 +74,7 @@ class TestGenerateCardCopyHappyPath:
         mock_ai.generate_card_copy = AsyncMock(return_value=_well_formed_response())
 
         with patch("app.services.ai.service.get_ai_provider", return_value=mock_ai):
-            result = await generate_card_copy(_listing(), attributes=[])
+            result = await generate_card_copy(_listing(), attributes=_specs_attributes())
 
         assert [c.kind for c in result] == list(CARD_KINDS)
         assert all(isinstance(c, CardCopy) for c in result)
@@ -84,10 +102,13 @@ class TestTruncation:
 
     @pytest.mark.asyncio
     async def test_bullet_over_50_chars_is_truncated(self):
+        """Veiculo trocado de `specs` para `benefits` de proposito: o truncamento
+        e do sanitizador do LLM, e `card_specs` nao passa mais por ele. Deixar
+        o caso em specs testaria um caminho que nao existe."""
         response = _well_formed_response()
-        long_bullet = "Este bullet de especificacao tem oitenta caracteres de puro enchimento aqui"
+        long_bullet = "Este bullet de beneficio tem oitenta caracteres de puro enchimento aqui ok"
         assert len(long_bullet) > MAX_BULLET_CHARS
-        response["specs"]["bullets"] = [long_bullet, "750W", "Bivolt"]
+        response["benefits"]["bullets"] = [long_bullet, "750W", "Bivolt"]
 
         mock_ai = AsyncMock()
         mock_ai.generate_card_copy = AsyncMock(return_value=response)
@@ -95,8 +116,8 @@ class TestTruncation:
         with patch("app.services.ai.service.get_ai_provider", return_value=mock_ai):
             result = await generate_card_copy(_listing(), attributes=[])
 
-        specs = next(c for c in result if c.kind == "card_specs")
-        assert len(specs.bullets[0]) <= MAX_BULLET_CHARS
+        benefits = next(c for c in result if c.kind == "card_benefits")
+        assert len(benefits.bullets[0]) <= MAX_BULLET_CHARS
 
 
 class TestAngleDropping:
@@ -109,7 +130,7 @@ class TestAngleDropping:
         mock_ai.generate_card_copy = AsyncMock(return_value=response)
 
         with patch("app.services.ai.service.get_ai_provider", return_value=mock_ai):
-            result = await generate_card_copy(_listing(), attributes=[])
+            result = await generate_card_copy(_listing(), attributes=_specs_attributes())
 
         kinds = [c.kind for c in result]
         assert "card_usage" not in kinds
@@ -119,18 +140,22 @@ class TestAngleDropping:
 
     @pytest.mark.asyncio
     async def test_angle_with_empty_title_is_dropped_others_survive(self):
+        """Veiculo trocado de `specs` para `usage`: com specs, este teste
+        continuava PASSANDO depois da mudanca, mas pelo motivo errado — o card
+        sumia por nao haver atributos, e nao por causa do titulo vazio. Um
+        teste que passa sem exercitar a regra e pior que um que falha."""
         response = _well_formed_response()
-        response["specs"]["title"] = "   "
+        response["usage"]["title"] = "   "
 
         mock_ai = AsyncMock()
         mock_ai.generate_card_copy = AsyncMock(return_value=response)
 
         with patch("app.services.ai.service.get_ai_provider", return_value=mock_ai):
-            result = await generate_card_copy(_listing(), attributes=[])
+            result = await generate_card_copy(_listing(), attributes=_specs_attributes())
 
         kinds = [c.kind for c in result]
-        assert "card_specs" not in kinds
-        assert len(result) == 2
+        assert "card_usage" not in kinds
+        assert kinds == ["card_benefits", "card_specs"]
 
 
 class TestResilience:
@@ -153,7 +178,7 @@ class TestResilience:
         mock_ai.generate_card_copy = AsyncMock(return_value=response)
 
         with patch("app.services.ai.service.get_ai_provider", return_value=mock_ai):
-            result = await generate_card_copy(_listing(), attributes=[])
+            result = await generate_card_copy(_listing(), attributes=_specs_attributes())
 
         kinds = [c.kind for c in result]
         assert kinds == ["card_benefits", "card_specs"]
@@ -248,7 +273,7 @@ class TestContentDenylistSanitizer:
         mock_ai = AsyncMock()
         mock_ai.generate_card_copy = AsyncMock(return_value=response)
         with patch("app.services.ai.service.get_ai_provider", return_value=mock_ai):
-            result = await generate_card_copy(_listing(), attributes=[])
+            result = await generate_card_copy(_listing(), attributes=_specs_attributes())
 
         assert [c.kind for c in result] == list(CARD_KINDS)
         benefits = next(c for c in result if c.kind == "card_benefits")
@@ -265,7 +290,7 @@ class TestContentDenylistSanitizer:
         mock_ai = AsyncMock()
         mock_ai.generate_card_copy = AsyncMock(return_value=response)
         with patch("app.services.ai.service.get_ai_provider", return_value=mock_ai):
-            result = await generate_card_copy(_listing(), attributes=[])
+            result = await generate_card_copy(_listing(), attributes=_specs_attributes())
 
         assert [c.kind for c in result] == ["card_usage", "card_specs"]
 
@@ -277,7 +302,7 @@ class TestContentDenylistSanitizer:
         mock_ai = AsyncMock()
         mock_ai.generate_card_copy = AsyncMock(return_value=response)
         with patch("app.services.ai.service.get_ai_provider", return_value=mock_ai):
-            result = await generate_card_copy(_listing(), attributes=[])
+            result = await generate_card_copy(_listing(), attributes=_specs_attributes())
 
         assert [c.kind for c in result] == ["card_usage", "card_specs"]
 
@@ -306,20 +331,23 @@ class TestContentDenylistSanitizer:
 
     @pytest.mark.asyncio
     async def test_copy_legitima_com_medidas_passa_intacta(self):
+        """Veiculo trocado de `specs` para `benefits`: a denylist so roda no
+        texto do LLM, e specs deixou de vir dele."""
         response = _well_formed_response()
-        response["specs"]["bullets"] = [
+        bullets = [
             "Espessura de 3,5cm em madeira macica",
             "Alcance de 12,50 m em campo aberto",
             "Bateria de 12V com 5000mAh",
         ]
+        response["benefits"]["bullets"] = bullets
 
         mock_ai = AsyncMock()
         mock_ai.generate_card_copy = AsyncMock(return_value=response)
         with patch("app.services.ai.service.get_ai_provider", return_value=mock_ai):
             result = await generate_card_copy(_listing(), attributes=[])
 
-        specs = next(c for c in result if c.kind == "card_specs")
-        assert specs.bullets == response["specs"]["bullets"]
+        benefits = next(c for c in result if c.kind == "card_benefits")
+        assert benefits.bullets == bullets
 
 
 class TestFailureLogging:

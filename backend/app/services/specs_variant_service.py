@@ -12,11 +12,16 @@ nunca de uma foto bruta re-derivada nem do card Pillow ja renderizado —
 mesma fonte e mesmo motivo da variante de capa (Frente A): a capa
 deterministica nunca passou por IA, entao o rotulo do produto nela e fiel.
 
-A copy (titulo + bullets) NAO e inventada aqui: vem de
-`generate_card_copy`, o mesmo mecanismo que hoje alimenta o `card_specs`
-Pillow. Se o angulo `card_specs` nao vier desta chamada — o sanitizador do
-copy service pode descarta-lo — o servico levanta erro claro em vez de
-tentar de novo; quem chamou decide se repete o pedido.
+A copy (titulo + bullets) NAO e inventada aqui NEM por LLM: vem de
+`build_specs_card`, que monta os bullets direto do `value_name` dos
+atributos — o mesmo texto que o `card_specs` Pillow usa. O motor de IA entra
+so para a composicao visual (foto + layout); o texto chega a ele pronto.
+
+Antes esta funcao chamava `generate_card_copy` e dependia do LLM devolver um
+angulo `card_specs` utilizavel. Isso somava um modo de falha ("a copy nao
+veio, tente de novo") e, pior, punha texto estocastico numa ficha tecnica:
+o tipo do perfume do SKU 37 saiu parafraseado numa execucao e correto em
+outra. Ficha tecnica e dado, nao redacao.
 """
 import logging
 
@@ -32,12 +37,12 @@ SPECS_AI_SORT_ORDER = 91  # fora da faixa 0..N da galeria, ao lado de COVER_AI_S
 
 
 class SpecsVariantError(RuntimeError):
-    """Nao ha capa deterministica com bytes salvos, ou a copy nao trouxe o angulo card_specs."""
+    """Nao ha capa deterministica com bytes salvos, ou os atributos nao formam uma ficha."""
 
 
 def _build_specs_prompt(title: str, bullets: list[str]) -> str:
     """Prompt VERBATIM na estrutura da SPEC (Frente B) — mesma clausula
-    CRITICAL de `cover_variant_service._COVER_PROMPT`, pelo mesmo motivo: o
+    CRITICAL de `cover_variant_service._COVER_PROMPT_RICH`, pelo mesmo motivo: o
     texto impresso no produto (marca, volume, unidade) nao pode ser
     reescrito pela IA so porque ela esta compondo um card ao redor dele.
     """
@@ -70,11 +75,11 @@ async def generate_specs_variant(db, listing, access_token: str) -> ListingImage
     """Gera 1 candidato de ficha tecnica IA a partir dos bytes SALVOS da capa.
 
     Levanta `SpecsVariantError` antes de tocar no motor de IA se: (a) nao
-    houver capa deterministica com bytes salvos, ou (b) a copy gerada nao
-    trouxer o angulo `card_specs` — nos dois casos um request que nao pode
-    ter sucesso nao deve chamar um motor pago.
+    houver capa deterministica com bytes salvos, ou (b) os atributos do
+    anuncio nao renderem `MIN_BULLETS` linhas de ficha — nos dois casos um
+    request que nao pode ter sucesso nao deve chamar um motor pago.
     """
-    from app.services.image_card_copy_service import generate_card_copy
+    from app.services.image_card_copy_service import build_specs_card
     from app.services.image_engines.openai_edit_engine import OpenAIEditEngine
     from app.services.image_service import MLPictureService
     from app.workers.tasks.image_tasks import _prepare_image_for_upload
@@ -99,11 +104,10 @@ async def generate_specs_variant(db, listing, access_token: str) -> ListingImage
         )
     ).scalars().all()
 
-    cards = await generate_card_copy(listing, attributes)
-    specs_copy = next((c for c in cards if c.kind == "card_specs"), None)
+    specs_copy = build_specs_card(attributes)
     if specs_copy is None:
         raise SpecsVariantError(
-            "copy do angulo card_specs nao veio desta chamada — tente novamente"
+            "atributos insuficientes para montar a ficha tecnica deste anuncio"
         )
 
     prompt = _build_specs_prompt(specs_copy.title, specs_copy.bullets)
@@ -125,6 +129,9 @@ async def generate_specs_variant(db, listing, access_token: str) -> ListingImage
             sort_order=SPECS_AI_SORT_ORDER,
             kind=SPECS_AI_KIND,
             source_sku=cover.source_sku,
+            # Mesma razao da Frente A: candidato reprovado continua revisavel.
+            # Sem `ml_picture_id` — nada subiu para o ML.
+            image_bytes=generated_bytes,
         )
         db.add(candidate)
         await db.commit()
