@@ -115,12 +115,13 @@ class TestGenerateSpecsVariantSuccess:
         assert engine_kwargs["n"] == 1
         prompt = engine_kwargs["prompt"]
         # O texto que chega ao motor e o deterministico, montado dos atributos
-        # — nao mais o que um LLM redigiu para este pedido.
+        # — nao mais o que um LLM redigiu para este pedido. E SEM titulo: a
+        # ficha sai so com os bullets, por decisao de produto.
         from app.services.image_card_copy_service import SPECS_CARD_TITLE
 
-        assert SPECS_CARD_TITLE in prompt
         assert "Marca: Wepink" in prompt
         assert "Tipo de perfume: Água de colônia" in prompt
+        assert SPECS_CARD_TITLE not in prompt
 
 
 class TestGenerateSpecsVariantMissingCoverBytes:

@@ -112,14 +112,18 @@ _COVER_PROMPT_LIGHT = (
 )
 
 
-def _pick_prompt(requires_white_bg: bool) -> str:
-    """Prompt compatível com o QA que a imagem vai enfrentar.
+def _pick_prompt(requires_white_bg: bool = True) -> str:
+    """Devolve SEMPRE o prompt leve — a capa é branca em toda categoria.
 
-    Pedir ambientação rica onde o QA exige fundo branco é gastar chamada paga
-    num resultado impossível — o teto do que a IA pode entregar é definido
-    pela categoria, não pelo gosto de quem pediu.
+    A ramificação por categoria foi removida por decisão de produto: capa
+    branca padronizada, sem exceção. O parâmetro sobrevive só para não
+    quebrar chamadores; seu valor é ignorado.
+
+    O prompt RICO continua no módulo, DORMANT (ver `_COVER_PROMPT_RICH`),
+    aguardando o toggle por seller no frontend. Não é código morto por
+    descuido: é material pronto, e apagá-lo custaria reescrevê-lo depois.
     """
-    return _COVER_PROMPT_LIGHT if requires_white_bg else _COVER_PROMPT_RICH
+    return _COVER_PROMPT_LIGHT
 
 
 async def _load_latest_deterministic_cover(db, listing):
@@ -176,15 +180,16 @@ async def generate_cover_variant(db, listing, access_token: str) -> ListingImage
             "capa deterministica sem bytes salvos — anuncio gerado antes desta funcionalidade"
         )
 
-    # A variante pode virar capa (sort_order=0) se for promovida, então a mesma
-    # regra de fundo branco puro da capa vale para ela. Resolvida ANTES do
-    # motor porque decide QUAL prompt pedir — depois só restaria pagar por uma
-    # imagem que o QA já vai recusar.
-    requires_white_bg = await _resolve_requires_white_bg(listing)
+    # Capa branca em TODA categoria, sem consultar a categoria-raiz. A
+    # geração e o QA passam a concordar por construção: pedir fundo branco e
+    # depois não verificar deixaria a categoria fora da antiga lista sem
+    # nenhuma checagem do resultado — foi essa divergência entre o que se pede
+    # e o que se cobra que reprovava a Frente A por construção.
+    requires_white_bg = True
 
     engine = OpenAIEditEngine()
     variants = await engine.edit(
-        images=[cover.image_bytes], prompt=_pick_prompt(requires_white_bg), n=1
+        images=[cover.image_bytes], prompt=_pick_prompt(), n=1
     )
     generated_bytes = variants[0]
 

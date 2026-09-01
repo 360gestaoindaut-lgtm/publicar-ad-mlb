@@ -39,7 +39,16 @@ class OpenAIEditEngine:
     def __init__(self) -> None:
         self.settings = get_settings()
 
-    async def edit(self, images: list[bytes], prompt: str, n: int) -> list[bytes]:
+    async def edit(
+        self, images: list[bytes], prompt: str, n: int, size: str | None = None
+    ) -> list[bytes]:
+        """`size` explicito vence o padrao do modelo.
+
+        Existe para o esquema de 5 posicoes: o canvas passa a ser dado do
+        PERFIL da categoria (`PositionProfile.canvas`), nao uma constante do
+        motor — e o que permite um perfil futuro pedir outro formato sem
+        tocar aqui. Omitido, o comportamento e o de sempre.
+        """
         files = [
             ("image[]", (f"input_{i}.jpg", img, "image/jpeg"))
             for i, img in enumerate(images)
@@ -51,7 +60,7 @@ class OpenAIEditEngine:
             "n": str(n),
             "quality": "medium",
             "output_format": "jpeg",
-            "size": _size_for_model(model),
+            "size": size or _size_for_model(model),
         }
         if _accepts_input_fidelity(model):
             data["input_fidelity"] = "high"

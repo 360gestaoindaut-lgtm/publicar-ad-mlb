@@ -77,3 +77,6 @@ celerybeat.pid
 # ".env.bak-20260827170436" (nao termina em .env), entao precisa de regra propria.
 .env.bak-*
 .env.backup*
+
+# Saida de scripts de retest local de imagem (resíduo, nunca versionado)
+backend/_retest/

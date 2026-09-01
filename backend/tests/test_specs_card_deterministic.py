@@ -298,54 +298,80 @@ class TestSpecsVariantUsesDeterministicBullets:
             mock_engine_cls.return_value.edit.assert_not_awaited()
 
 
-class TestSpecsPromptHerdaEstiloDoPiloto:
-    """O prompt tem que pedir a linguagem visual que o Gabriel aprovou.
+class TestSpecsPromptLinguagemUnificada:
+    """O prompt da ficha usa a MESMA linguagem visual das posicoes 2, 3 e 4.
 
-    A referencia sao os `card-01..08` do piloto (`~/Desktop/piloto-cards-ia`):
-    bloco de cor tirado do proprio produto, textura de papel, luz radial,
-    painel neutro com titulo dominante e bullets com icone ilustrado. O prompt
-    anterior pedia o oposto disso ("no extra decorative elements") e produzia
-    um card plano que ninguem tinha validado.
+    O Gabriel notou que as posicoes 2 e 5 destoavam da 3: fundo neutro com
+    painel colado na borda, em vez de cena atmosferica de fundo inteiro com
+    cartao flutuando dentro dela. A causa era a redacao do prompt, nao o
+    modelo — o texto antigo pedia literalmente "Lower ~40%: a clean panel".
+
+    E a ficha nao tem mais titulo: sai so com os bullets.
     """
 
     @staticmethod
-    def _prompt():
+    def _prompt(bullets=None):
         """Espaco em branco normalizado: a quebra de linha do prompt e
-        cosmetica, e sem isso a assercao passa a medir ONDE a linha quebrou em
-        vez do que o prompt pede — "radial light" partido ao meio reprovaria
-        um prompt correto."""
+        cosmetica, e sem isso a assercao mediria ONDE a linha quebrou em vez
+        do que o prompt pede."""
         import re
 
         from app.services.specs_variant_service import _build_specs_prompt
 
         bruto = _build_specs_prompt(
-            "Especificações Técnicas",
-            ["Marca: Wepink", "Modelo: Martin", "Tipo de perfume: Água de colônia"],
+            bullets or ["Marca: Wepink", "Modelo: Martin", "Tipo de perfume: Água de colônia"]
         )
         return re.sub(r"\s+", " ", bruto).lower()
 
-    def test_pede_bloco_de_cor_tirado_do_produto(self):
+    def test_pede_cena_de_fundo_inteiro_amostrada_do_produto(self):
         p = self._prompt()
-        assert "colour block" in p or "color block" in p
-        assert "sampled from the product" in p
+        assert "full-bleed backdrop" in p
+        assert "sampled from the product's own dominant color" in p
         assert "not flat white" in p
 
-    def test_pede_textura_e_luz_do_piloto(self):
+    def test_pede_cartao_flutuante_com_margem_das_quatro_bordas(self):
+        """O ponto da correcao: cartao integrado com margem, nunca painel
+        colado na borda cobrindo a largura toda."""
         p = self._prompt()
-        assert "paper" in p and "texture" in p
-        assert "radial light" in p
+        assert "integrated rounded card" in p
+        assert "visible margin from all four edges" in p
+        assert "never a flat panel spanning the full width" in p
 
-    def test_pede_icone_por_linha_e_hierarquia_tipografica(self):
+    def test_nao_pede_mais_o_painel_colado_na_borda(self):
+        """A redacao que causava a quebra de estilo nao pode voltar."""
         p = self._prompt()
-        assert "icon" in p
-        assert "geometric sans-serif" in p
-        assert "hierarchy" in p
+        assert "lower ~40%" not in p
+        assert "clean panel in a light neutral tone" not in p
 
-    def test_nao_pede_mais_ausencia_de_elementos_decorativos(self):
-        """A instrucao que achatava o card. Mantê-la ao lado do pedido de
-        bloco de cor e icone seria a mesma auto-contradicao que reprovava a
-        Frente A por construcao."""
-        assert "no extra decorative elements" not in self._prompt()
+    def test_pede_textura_de_papel_e_luz_direcional(self):
+        p = self._prompt()
+        assert "paper-like texture" in p
+        assert "directional lighting" in p
+
+    def test_pede_icone_por_linha(self):
+        p = self._prompt()
+        assert "illustrated line icon" in p
+
+    def test_proibe_cabecalho_explicitamente(self):
+        """Tirar a linha do titulo sem PROIBIR cabecalho convida o modelo a
+        inventar um para preencher o topo do cartao."""
+        p = self._prompt()
+        assert "do not render a heading, title or caption" in p
+
+    def test_nao_renderiza_titulo_fixo(self):
+        from app.services.image_card_copy_service import SPECS_CARD_TITLE
+
+        assert SPECS_CARD_TITLE.lower() not in self._prompt()
+
+    def test_card_pillow_mantem_o_titulo(self):
+        """A remocao vale so para o prompt da IA. `build_specs_card` continua
+        devolvendo `title`, que e o cabecalho do card Pillow."""
+        from app.services.image_card_copy_service import (
+            SPECS_CARD_TITLE,
+            build_specs_card,
+        )
+
+        assert build_specs_card(_sku37_attributes()).title == SPECS_CARD_TITLE
 
     def test_mantem_os_bullets_verbatim(self):
         p = self._prompt()
@@ -356,7 +382,7 @@ class TestSpecsPromptHerdaEstiloDoPiloto:
     def test_mantem_a_clausula_critical_do_texto_impresso(self):
         from app.services.specs_variant_service import _build_specs_prompt
 
-        p = _build_specs_prompt("T", ["a", "b"])
+        p = _build_specs_prompt(["a", "b"])
         assert "CRITICAL" in p
         assert "character for" in p
         assert "Never change a number or a unit." in p
@@ -365,3 +391,4 @@ class TestSpecsPromptHerdaEstiloDoPiloto:
         p = self._prompt()
         assert "do not reshape" in p
         assert "watermark" in p or "badge" in p
+

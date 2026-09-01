@@ -49,81 +49,61 @@ class SpecsVariantError(RuntimeError):
     """Nao ha capa deterministica com bytes salvos, ou os atributos nao formam uma ficha."""
 
 
-def _build_specs_prompt(title: str, bullets: list[str]) -> str:
-    """Prompt do card de ficha tecnica, na linguagem visual APROVADA no piloto.
+def _build_specs_prompt(bullets: list[str]) -> str:
+    """Prompt da ficha tecnica — MESMA linguagem visual das posicoes 2, 3 e 4.
 
-    A referencia sao os `card-01..08` gerados por `~/Desktop/piloto-cards-ia/
-    gerar.py` e validados pelo Gabriel: bloco de cor amostrado do proprio
-    produto, textura de papel, luz radial suave, painel neutro embaixo com
-    titulo dominante e cada linha precedida de um icone de linha ilustrado.
+    Cena atmosferica ocupando o quadro inteiro, amostrada da cor do produto,
+    com o texto num cartao arredondado FLUTUANDO dentro dela. A versao
+    anterior pedia "Lower ~40%: a clean panel", um painel colado na borda
+    cobrindo a largura toda — o que destoava da posicao 3 e foi o que o
+    Gabriel identificou como quebra de estilo. A causa era a redacao do
+    prompt, nao o modelo.
 
-    Duas adaptacoes conscientes em relacao ao piloto — copiar literalmente
-    daria um card pior:
+    A secao LAYOUT antiga saiu junto, e nao so a clausula ALLOWED foi
+    trocada: aquela secao descrevia exatamente o painel que a nova clausula
+    proibe. Manter as duas deixaria o prompt pedindo e proibindo a mesma
+    coisa — o defeito que reprovava a Frente A por construcao.
 
-    1. QUADRADO, nao 3:4. O piloto rodou com `size="768x1024"`, mas
-       `OpenAIEditEngine` pede sempre o maior QUADRADO do modelo (1200x1200
-       no gpt-image-2) e `_prepare_image_for_upload` normaliza para quadrado
-       de qualquer forma. Um 3:4 chegaria ao ML com tarja branca em cima e
-       embaixo. As proporcoes de "dois tercos / um terco" viram ~60/40.
+    SEM TITULO, por decisao de produto: a ficha sai so com os bullets. O
+    prompt PROIBE cabecalho explicitamente, em vez de apenas omiti-lo —
+    tirar a linha do titulo sem proibir convida o modelo a inventar um para
+    preencher o topo do cartao.
 
-    2. O piloto tinha 3 bullets de BENEFICIO redigidos a mao, com icone
-       nomeado um a um ("a droplet, a brand seal, a bottle"). Aqui o conteudo
-       e ficha tecnica ("Rotulo: valor", 2 a 3 linhas, ate 50 chars), e os
-       atributos variam por categoria — nao da para nomear o icone de cada
-       linha, entao a instrucao pede um icone cujo sentido acompanhe a linha.
+    `build_specs_card` continua devolvendo `title`: o card Pillow
+    (`card_specs`) e outro caminho e mantem o cabecalho dele.
 
     A clausula CRITICAL vem do piloto palavra por palavra: e a licao da Fase
     5c, quando o motor reescreveu "100ml" como "160ml" e "wepink" como
     "weoink" num anuncio real.
-
-    O QUE MUDOU EM RELACAO AO PROMPT ANTERIOR, e por que: o prompt anterior
-    pedia "no clutter, no extra decorative elements" e proibia "relight" e
-    "unrelated backgrounds". Isso e o oposto do estilo aprovado, que TROCA o
-    fundo por um bloco de cor e RE-ILUMINA a cena. Manter as duas coisas
-    juntas seria a mesma auto-contradicao que fazia a Frente A ser reprovada
-    por construcao (ver `_pick_prompt` em `cover_variant_service`): pedir ao
-    motor exatamente aquilo que a instrucao seguinte proibe. A fidelidade que
-    importa — forma, cor e TEXTO IMPRESSO do produto — continua exigida; o
-    que se liberou explicitamente foi so a encenacao ao redor dele.
     """
-    linhas = "\n".join(f'  {i}. "{b}"' for i, b in enumerate(bullets, start=1))
+    linhas = "\n".join(f'- "{b}"' for b in bullets)
     return (
-        "Design a premium e-commerce specification card in SQUARE format for a\n"
-        "product listing, built around the product in the reference image.\n\n"
-        "LAYOUT\n"
-        "- Upper ~60%: the product from the reference image, standing on a soft\n"
-        "  studio surface with a gentle contact shadow, filling the space\n"
-        "  confidently.\n"
-        "- Background behind the product: a large colour block sampled from the\n"
-        "  product itself, with a subtle paper-like texture and a soft radial\n"
-        "  light behind it. Not flat white.\n"
-        "- Lower ~40%: a clean panel in a light neutral tone that contrasts with\n"
-        "  the colour block, holding the title and the specification lines.\n\n"
-        "TEXT TO RENDER (Brazilian Portuguese, exactly as written, verbatim —\n"
-        "do not translate, paraphrase, correct, reorder or invent additional\n"
-        "specifications)\n"
-        f'- Headline, large and bold: "{title}"\n'
-        "- Specification lines, each preceded by a small illustrated line icon\n"
-        "  whose meaning matches that line:\n"
-        f"{linhas}\n\n"
-        "TYPOGRAPHY\n"
-        "- Modern geometric sans-serif. Clear hierarchy: headline dominant,\n"
-        "  specification lines calm and readable. Generous margins. Nothing\n"
-        "  cropped at the edges.\n\n"
-        "ALLOWED — staging around the product: replace the background with the\n"
-        "colour block described above, add studio lighting and a contact shadow,\n"
-        "and adjust framing.\n\n"
+        "Compose a premium square technical specification card (1200x1200)\n"
+        "using the reference photo of this exact product as the visual source.\n\n"
+        "ALLOWED: place the product against an elegant full-bleed backdrop\n"
+        "sampled from the product's own dominant color, with soft paper-like\n"
+        "texture and directional lighting — not flat white. Reserve an\n"
+        "integrated rounded card, with visible margin from all four edges, for\n"
+        "a short bulleted list — the card must float within the atmospheric\n"
+        "scene, never a flat panel spanning the full width or touching the\n"
+        "image edges.\n\n"
         "FORBIDDEN — the product must keep its identity: do not reshape, recolor\n"
         "or re-proportion the product body; do not add, remove or move any\n"
-        "object; no props, hands, logos, watermarks, prices or badges, and no\n"
-        "decorative elements beyond the icons and the panel described above.\n\n"
+        "object; no props, hands, logos, watermarks, prices or badges.\n\n"
         "CRITICAL: do not alter, redraw, translate, correct or re-render ANY text\n"
         "printed on the product or its packaging. Brand names, product names, volumes\n"
         "and measurement units must be preserved exactly as they appear, character for\n"
         "character. Never change a number or a unit. If any text is unreadable, keep it\n"
         "unreadable rather than inventing plausible text.\n\n"
-        "The product must remain recognisable as the same physical unit from the\n"
-        "reference photograph, now composed into a finished specification card."
+        "Text to render inside the card (Brazilian Portuguese, exactly as\n"
+        "written, verbatim — do not translate, paraphrase, correct, reorder or\n"
+        "invent additional specifications), one line per item, each preceded by\n"
+        "a small illustrated line icon whose meaning matches that line. Do NOT\n"
+        "render a heading, title or caption of any kind above or below the\n"
+        "list:\n"
+        f"{linhas}\n\n"
+        "Typography: modern geometric sans-serif, calm and readable, generous\n"
+        "margins inside the card. Nothing cropped at the edges."
     )
 
 
@@ -166,7 +146,7 @@ async def generate_specs_variant(db, listing, access_token: str) -> ListingImage
             "atributos insuficientes para montar a ficha tecnica deste anuncio"
         )
 
-    prompt = _build_specs_prompt(specs_copy.title, specs_copy.bullets)
+    prompt = _build_specs_prompt(specs_copy.bullets)
 
     engine = OpenAIEditEngine()
     variants = await engine.edit(images=[cover.image_bytes], prompt=prompt, n=1)
