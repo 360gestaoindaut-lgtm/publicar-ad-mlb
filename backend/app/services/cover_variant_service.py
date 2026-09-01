@@ -42,7 +42,11 @@ class CoverVariantError(RuntimeError):
 
 # Prompt VERBATIM da SPEC (Frente A) — a cláusula CRITICAL não é enfeite, ver
 # `_NO_TEXT_EDIT_RULE` em `image_tasks.py` para o precedente do mesmo risco.
-_COVER_PROMPT = (
+#
+# Duas variantes, escolhidas pela categoria (ver `_pick_prompt`). Este prompt
+# RICO troca o fundo branco por gradiente/textura — o que é exatamente o que
+# `validate_image` reprova quando a categoria-raiz exige fundo branco puro.
+_COVER_PROMPT_RICH = (
     "Place this exact product photo into a subtle studio environment.\n\n"
     "ALLOWED: replace the flat white background with a soft neutral gradient or a\n"
     "subtle surface texture; add gentle directional lighting and a soft contact\n"
@@ -59,6 +63,47 @@ _COVER_PROMPT = (
     "The result must be recognisable as the same photograph of the same physical\n"
     "unit, only better lit and better staged."
 )
+
+# Variante LEVE, para categoria-raiz que exige fundo branco puro na capa.
+#
+# Aqui a ambientação se reduz a luz e sombra de contato: o fundo branco
+# continua branco e dominante. Não é preferência estética — `validate_image`
+# exige >=90% da borda em #FFFFFF nessas categorias, e o prompt rico produz 0%.
+# Sem esta variante o pedido é reprovado por CONSTRUÇÃO, sempre, depois de já
+# ter pago a geração.
+#
+# As cláusulas FORBIDDEN e CRITICAL são as mesmas do prompt rico, palavra por
+# palavra: o risco de o motor reescrever o rótulo do produto não muda com a
+# categoria. O que muda é só o que a cláusula ALLOWED autoriza.
+_COVER_PROMPT_LIGHT = (
+    "Relight this exact product photo, keeping its plain white background.\n\n"
+    "ALLOWED: keep the pure white background white and dominant; add gentle\n"
+    "directional lighting and a soft contact shadow beneath the product;\n"
+    "adjust framing margins only.\n\n"
+    "FORBIDDEN — the background must stay pure white: do not add gradients,\n"
+    "textures, surfaces, colored backdrops, vignettes or scenery of any kind.\n\n"
+    "FORBIDDEN — the product itself must be pixel-faithful to the reference:\n"
+    "do not redraw, reshape, recolor, rotate or relight the product body; do not\n"
+    "add, remove or move any object; do not introduce props, hands, backgrounds\n"
+    "with objects, logos, badges, borders or decorative elements.\n\n"
+    "CRITICAL: do not alter, redraw, translate, correct or re-render ANY text\n"
+    "printed on the product or its packaging. Brand names, product names, volumes\n"
+    "and measurement units must be preserved exactly as they appear, character for\n"
+    "character. Never change a number or a unit. If any text is unreadable, keep it\n"
+    "unreadable rather than inventing plausible text.\n\n"
+    "The result must be recognisable as the same photograph of the same physical\n"
+    "unit, only better lit."
+)
+
+
+def _pick_prompt(requires_white_bg: bool) -> str:
+    """Prompt compatível com o QA que a imagem vai enfrentar.
+
+    Pedir ambientação rica onde o QA exige fundo branco é gastar chamada paga
+    num resultado impossível — o teto do que a IA pode entregar é definido
+    pela categoria, não pelo gosto de quem pediu.
+    """
+    return _COVER_PROMPT_LIGHT if requires_white_bg else _COVER_PROMPT_RICH
 
 
 async def _load_latest_deterministic_cover(db, listing):
@@ -115,13 +160,18 @@ async def generate_cover_variant(db, listing, access_token: str) -> ListingImage
             "capa deterministica sem bytes salvos — anuncio gerado antes desta funcionalidade"
         )
 
+    # A variante pode virar capa (sort_order=0) se for promovida, então a mesma
+    # regra de fundo branco puro da capa vale para ela. Resolvida ANTES do
+    # motor porque decide QUAL prompt pedir — depois só restaria pagar por uma
+    # imagem que o QA já vai recusar.
+    requires_white_bg = await _resolve_requires_white_bg(listing)
+
     engine = OpenAIEditEngine()
-    variants = await engine.edit(images=[cover.image_bytes], prompt=_COVER_PROMPT, n=1)
+    variants = await engine.edit(
+        images=[cover.image_bytes], prompt=_pick_prompt(requires_white_bg), n=1
+    )
     generated_bytes = variants[0]
 
-    # A variante pode virar capa (sort_order=0) se for promovida, então a
-    # mesma regra de fundo branco puro da capa vale para ela.
-    requires_white_bg = await _resolve_requires_white_bg(listing)
     prepared, verdict = _prepare_image_for_upload(
         generated_bytes, requires_white_bg=requires_white_bg
     )
@@ -135,6 +185,12 @@ async def generate_cover_variant(db, listing, access_token: str) -> ListingImage
             sort_order=COVER_AI_SORT_ORDER,
             kind=COVER_AI_KIND,
             source_sku=cover.source_sku,
+            # Os bytes do que a IA produziu, mesmo reprovado. Um candidato
+            # existe para um humano julgar; descartar a imagem na reprovação
+            # automática apaga a única evidência de se o QA foi justo — e a
+            # geração já foi paga de qualquer forma. Sem `ml_picture_id`: nada
+            # subiu para o ML, o blob fica só no banco.
+            image_bytes=generated_bytes,
         )
         db.add(candidate)
         await db.commit()

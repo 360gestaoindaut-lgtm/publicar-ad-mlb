@@ -420,3 +420,157 @@ class TestCoverLookupWithDuplicateCovers:
         assert "listing_images.image_bytes IS NOT NULL" in sql, sql
         assert "ORDER BY listing_images.created_at DESC" in sql, sql
         assert "LIMIT" in sql, sql
+
+
+class TestCoverVariantPromptDependsOnCategory:
+    """O prompt da ambientação tem que ser compatível com o QA da categoria.
+
+    O prompt rico manda trocar o fundo branco por gradiente/textura. Em
+    categoria-raiz que exige fundo branco puro, isso é reprovado por
+    CONSTRUÇÃO pelo `validate_image` — 0% da borda em #FFFFFF contra um
+    mínimo de 90%. Gerar assim queima uma chamada paga num resultado que já
+    se sabe que será rejeitado, toda vez.
+    """
+
+    @staticmethod
+    async def _capture_prompt(requires_white_bg: bool) -> str:
+        from app.services.cover_variant_service import generate_cover_variant
+
+        cover = _make_cover(image_bytes=b"cover-bytes")
+        listing = _make_listing()
+        mock_db = _make_db(cover)
+        verdict = ImageValidationResult(is_valid=True)
+
+        with patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=requires_white_bg,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            return_value=(b"prepared", verdict),
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(return_value=[b"variant"])
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic-1")
+            await generate_cover_variant(mock_db, listing, "token")
+
+        return mock_engine_cls.return_value.edit.await_args.kwargs["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_white_bg_category_never_asks_for_gradient_or_texture(self):
+        """Mede o PEDIDO, não a palavra: o prompt leve cita "gradients" numa
+        cláusula que os PROÍBE, e proibir é justamente o comportamento certo.
+        O que não pode aparecer é o pedido do prompt rico."""
+        prompt = await self._capture_prompt(requires_white_bg=True)
+        lowered = prompt.lower()
+        assert "replace the flat white background" not in lowered
+        assert "subtle surface texture; add" not in lowered
+        assert "do not add gradients" in lowered
+
+    @pytest.mark.asyncio
+    async def test_white_bg_category_asks_to_preserve_the_white_background(self):
+        prompt = await self._capture_prompt(requires_white_bg=True)
+        lowered = prompt.lower()
+        assert "white background" in lowered
+        # A ambientação permitida vira só luz e sombra de contato.
+        assert "contact shadow" in lowered
+
+    @pytest.mark.asyncio
+    async def test_non_white_bg_category_keeps_the_richer_prompt(self):
+        prompt = await self._capture_prompt(requires_white_bg=False)
+        assert "gradient" in prompt.lower()
+
+    @pytest.mark.asyncio
+    async def test_both_prompts_keep_the_critical_text_clause(self):
+        """A cláusula que protege o texto impresso no produto não pode sumir
+        de nenhuma das duas variantes — é o que impede '100ml' virar '160ml'."""
+        for wb in (True, False):
+            prompt = await self._capture_prompt(requires_white_bg=wb)
+            assert "CRITICAL" in prompt
+            assert "character for" in prompt
+
+    @pytest.mark.asyncio
+    async def test_category_is_consulted_before_the_paid_engine_runs(self):
+        """A consulta de categoria tem que anteceder o motor: é o que
+        transforma a checagem em economia, e não só em correção."""
+        from app.services.cover_variant_service import generate_cover_variant
+
+        ordem: list[str] = []
+
+        async def _fake_requires(listing):
+            ordem.append("categoria")
+            return True
+
+        async def _fake_edit(images, prompt, n):
+            ordem.append("motor")
+            return [b"variant"]
+
+        cover = _make_cover(image_bytes=b"cover-bytes")
+        mock_db = _make_db(cover)
+        verdict = ImageValidationResult(is_valid=True)
+
+        with patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new=_fake_requires,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            return_value=(b"prepared", verdict),
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(side_effect=_fake_edit)
+            mock_ml_cls.return_value.upload = AsyncMock(return_value="pic-1")
+            await generate_cover_variant(mock_db, _make_listing(), "token")
+
+        assert ordem == ["categoria", "motor"]
+
+
+class TestRejectedCandidateStaysReviewable:
+    """Candidato reprovado existe para alguém julgar.
+
+    Descartar os bytes na reprovação apaga justamente o que o humano
+    precisaria ver para decidir se o QA foi severo demais — e o custo da
+    geração já foi pago de qualquer forma.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rejected_candidate_persists_the_generated_bytes(self):
+        from app.services.cover_variant_service import generate_cover_variant
+
+        cover = _make_cover(image_bytes=b"cover-bytes")
+        mock_db = _make_db(cover)
+        verdict = ImageValidationResult(
+            is_valid=False, errors=["fundo da capa não é branco puro"]
+        )
+
+        with patch(
+            "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
+        ) as mock_engine_cls, patch(
+            "app.workers.tasks.image_tasks._resolve_requires_white_bg",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
+            "app.workers.tasks.image_tasks._prepare_image_for_upload",
+            return_value=(None, verdict),
+        ), patch(
+            "app.services.image_service.MLPictureService"
+        ) as mock_ml_cls:
+            mock_engine_cls.return_value.edit = AsyncMock(
+                return_value=[b"o-que-a-ia-produziu"]
+            )
+            mock_ml_cls.return_value.upload = AsyncMock()
+
+            candidate = await generate_cover_variant(mock_db, _make_listing(), "token")
+
+            mock_ml_cls.return_value.upload.assert_not_awaited()
+
+        assert candidate.status == "validation_failed"
+        assert candidate.ml_picture_id is None
+        assert candidate.approved is False
+        assert candidate.image_bytes == b"o-que-a-ia-produziu"
+        assert candidate.validation_error == verdict.reason

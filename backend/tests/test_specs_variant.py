@@ -1,21 +1,22 @@
 """Frente B: ficha tecnica renderizada por IA sob demanda + review_seconds.
 
 Testes de `generate_specs_variant` no mesmo estilo de `test_cover_variant.py`
-— db mockado com AsyncMock, engine e copy patchados na origem (imports
-locais dentro da funcao, entao o patch precisa mirar o modulo que define o
-nome, nao `specs_variant_service`).
+— db mockado com AsyncMock, engine patchado na origem (imports locais dentro
+da funcao, entao o patch precisa mirar o modulo que define o nome, nao
+`specs_variant_service`). Nao ha mais copy a patchar: os bullets vem de
+`build_specs_card`, que roda de verdade sobre os atributos do mock.
 
 Os testes de `review_seconds` chamam `ListingService.approve_images` de
 verdade (nao um mock do metodo) e leem o valor de volta direto do objeto ORM
 `ListingImage` — nao basta provar que um mock foi chamado com um numero.
 """
 from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
 from app.models.listing_image import ListingImage
-from app.services.image_card_copy_service import CardCopy
 from app.services.image_service import ImageValidationResult
 
 
@@ -38,6 +39,24 @@ def _make_cover(listing_id, image_bytes, source_sku="SKU0001"):
     )
 
 
+def _specs_attributes():
+    """Atributos que rendem uma ficha tecnica.
+
+    A Frente B deixou de pedir a copy ao LLM: os bullets saem de
+    `build_specs_card`, direto do `value_name` dos atributos. Sem atributos
+    nao ha ficha a compor, entao os testes que exercitam o caminho feliz
+    precisam fornece-los. Ver `test_specs_card_deterministic.py`.
+    """
+    return [
+        SimpleNamespace(attribute_id="BRAND", attribute_name="Marca",
+                        value_name="Wepink", value_id=None),
+        SimpleNamespace(attribute_id="MODEL", attribute_name="Modelo",
+                        value_name="Martin", value_id=None),
+        SimpleNamespace(attribute_id="PERFUME_TYPE", attribute_name="Tipo de perfume",
+                        value_name="Água de colônia", value_id="111075"),
+    ]
+
+
 def _make_db(cover_image, attributes=None):
     """AsyncMock de sessao cujas duas queries (capa determinística, depois
     atributos) devolvem `cover_image` e `attributes`, nessa ordem — mesma
@@ -46,7 +65,9 @@ def _make_db(cover_image, attributes=None):
     cover_result = MagicMock()
     cover_result.scalars.return_value.first.return_value = cover_image
     attrs_result = MagicMock()
-    attrs_result.scalars.return_value.all.return_value = list(attributes or [])
+    attrs_result.scalars.return_value.all.return_value = list(
+        _specs_attributes() if attributes is None else attributes
+    )
     mock_db.execute = AsyncMock(side_effect=[cover_result, attrs_result])
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()
@@ -66,17 +87,10 @@ class TestGenerateSpecsVariantSuccess:
         cover = _make_cover(listing.id, image_bytes=b"exact-saved-cover-bytes")
         mock_db = _make_db(cover)
 
-        specs_copy = CardCopy(
-            kind="card_specs", title="Ficha tecnica", bullets=["Bullet 1", "Bullet 2"]
-        )
         prepared = b"prepared-1200x1200"
         verdict = ImageValidationResult(is_valid=True)
 
         with patch(
-            "app.services.image_card_copy_service.generate_card_copy",
-            new_callable=AsyncMock,
-            return_value=[specs_copy],
-        ), patch(
             "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
         ) as mock_engine_cls, patch(
             "app.workers.tasks.image_tasks._prepare_image_for_upload",
@@ -100,9 +114,13 @@ class TestGenerateSpecsVariantSuccess:
         assert engine_kwargs["images"] == [b"exact-saved-cover-bytes"]
         assert engine_kwargs["n"] == 1
         prompt = engine_kwargs["prompt"]
-        assert "Ficha tecnica" in prompt
-        assert "Bullet 1" in prompt
-        assert "Bullet 2" in prompt
+        # O texto que chega ao motor e o deterministico, montado dos atributos
+        # — nao mais o que um LLM redigiu para este pedido.
+        from app.services.image_card_copy_service import SPECS_CARD_TITLE
+
+        assert SPECS_CARD_TITLE in prompt
+        assert "Marca: Wepink" in prompt
+        assert "Tipo de perfume: Água de colônia" in prompt
 
 
 class TestGenerateSpecsVariantMissingCoverBytes:
@@ -111,8 +129,7 @@ class TestGenerateSpecsVariantMissingCoverBytes:
         """Mesma propriedade cobrada em `test_cover_variant.py` para o
         servico irmao: uma chamada que nao pode ter sucesso (capa sem bytes
         salvos) nao pode chegar a instanciar um motor pago. O guard fica
-        ANTES de `generate_card_copy` e de `OpenAIEditEngine`, entao nenhum
-        dos dois deve ser tocado."""
+        ANTES de `OpenAIEditEngine`, que nao deve ser tocado."""
         from app.services.specs_variant_service import (
             SpecsVariantError,
             generate_specs_variant,
@@ -123,15 +140,11 @@ class TestGenerateSpecsVariantMissingCoverBytes:
         mock_db = _make_db(cover)
 
         with patch(
-            "app.services.image_card_copy_service.generate_card_copy",
-            new_callable=AsyncMock,
-        ) as mock_generate_copy, patch(
             "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
         ) as mock_engine_cls:
             with pytest.raises(SpecsVariantError):
                 await generate_specs_variant(mock_db, listing, "token-xyz")
 
-        mock_generate_copy.assert_not_called()
         mock_engine_cls.assert_not_called()
         mock_db.add.assert_not_called()
         mock_db.commit.assert_not_awaited()
@@ -161,17 +174,10 @@ class TestGenerateSpecsVariantPreservesPillowCard:
             status="approved",
         )
 
-        specs_copy = CardCopy(
-            kind="card_specs", title="Ficha tecnica", bullets=["Bullet 1", "Bullet 2"]
-        )
         prepared = b"prepared-bytes"
         verdict = ImageValidationResult(is_valid=True)
 
         with patch(
-            "app.services.image_card_copy_service.generate_card_copy",
-            new_callable=AsyncMock,
-            return_value=[specs_copy],
-        ), patch(
             "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
         ) as mock_engine_cls, patch(
             "app.workers.tasks.image_tasks._prepare_image_for_upload",
@@ -190,9 +196,19 @@ class TestGenerateSpecsVariantPreservesPillowCard:
         assert mock_db.execute.await_count == 2
 
 
-class TestGenerateSpecsVariantMissingCopyAngle:
+class TestGenerateSpecsVariantWithoutUsableAttributes:
+    """O modo de falha mudou de lugar, nao desapareceu.
+
+    Antes a ficha podia faltar porque o LLM nao devolveu o angulo `card_specs`
+    — falha estocastica, que se "resolvia" tentando de novo. Agora ela so
+    falta quando os atributos do anuncio nao rendem `MIN_BULLETS` linhas, o
+    que e deterministico: tentar de novo daria exatamente o mesmo resultado.
+    A propriedade cobrada continua a mesma: falhar ANTES do motor pago, sem
+    escrever nada.
+    """
+
     @pytest.mark.asyncio
-    async def test_missing_card_specs_angle_raises_and_writes_nothing(self):
+    async def test_insufficient_attributes_raise_and_write_nothing(self):
         from app.services.specs_variant_service import (
             SpecsVariantError,
             generate_specs_variant,
@@ -200,16 +216,9 @@ class TestGenerateSpecsVariantMissingCopyAngle:
 
         listing = _make_listing()
         cover = _make_cover(listing.id, image_bytes=b"cover-bytes")
-        mock_db = _make_db(cover)
-
-        # Copy trouxe outro angulo, mas o sanitizador descartou card_specs.
-        other_angle = CardCopy(kind="card_benefits", title="Beneficios", bullets=["A", "B"])
+        mock_db = _make_db(cover, attributes=[])
 
         with patch(
-            "app.services.image_card_copy_service.generate_card_copy",
-            new_callable=AsyncMock,
-            return_value=[other_angle],
-        ), patch(
             "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
         ) as mock_engine_cls:
             with pytest.raises(SpecsVariantError):
@@ -329,7 +338,7 @@ class TestSpecsCoverLookupWithDuplicateCovers:
         oldest = _make_cover(listing.id, image_bytes=b"capa-antiga")
 
         attrs_result = MagicMock()
-        attrs_result.scalars.return_value.all.return_value = []
+        attrs_result.scalars.return_value.all.return_value = _specs_attributes()
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(
             side_effect=[_DuplicateCoversResult([newest, oldest]), attrs_result]
@@ -337,16 +346,9 @@ class TestSpecsCoverLookupWithDuplicateCovers:
         mock_db.add = MagicMock()
         mock_db.commit = AsyncMock()
 
-        specs_copy = CardCopy(
-            kind="card_specs", title="Ficha tecnica", bullets=["Bullet 1"]
-        )
         verdict = ImageValidationResult(is_valid=True)
 
         with patch(
-            "app.services.image_card_copy_service.generate_card_copy",
-            new_callable=AsyncMock,
-            return_value=[specs_copy],
-        ), patch(
             "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
         ) as mock_engine_cls, patch(
             "app.workers.tasks.image_tasks._prepare_image_for_upload",
@@ -372,16 +374,9 @@ class TestSpecsCoverLookupWithDuplicateCovers:
         cover = _make_cover(listing.id, image_bytes=b"cover-bytes")
         mock_db = _make_db(cover)
 
-        specs_copy = CardCopy(
-            kind="card_specs", title="Ficha tecnica", bullets=["Bullet 1"]
-        )
         verdict = ImageValidationResult(is_valid=True)
 
         with patch(
-            "app.services.image_card_copy_service.generate_card_copy",
-            new_callable=AsyncMock,
-            return_value=[specs_copy],
-        ), patch(
             "app.services.image_engines.openai_edit_engine.OpenAIEditEngine"
         ) as mock_engine_cls, patch(
             "app.workers.tasks.image_tasks._prepare_image_for_upload",
