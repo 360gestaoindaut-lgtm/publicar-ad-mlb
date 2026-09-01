@@ -895,7 +895,7 @@ async def _gerar_cinco_posicoes(db, listing, access_token, profile, fotos, sku) 
     # Posicao 5 — ficha tecnica. Bullets ancorados no value_name real.
     ficha = campos["ficha"]
     if ficha is not None:
-        prompt5 = _build_specs_prompt(ficha.title, ficha.bullets)
+        prompt5 = _build_specs_prompt(ficha.bullets)
 
         async def _pos5():
             return (await engine.edit(images=[base_ia], prompt=prompt5, n=1, size=canvas))[0]
