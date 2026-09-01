@@ -41,33 +41,80 @@ class SpecsVariantError(RuntimeError):
 
 
 def _build_specs_prompt(title: str, bullets: list[str]) -> str:
-    """Prompt VERBATIM na estrutura da SPEC (Frente B) — mesma clausula
-    CRITICAL de `cover_variant_service._COVER_PROMPT_RICH`, pelo mesmo motivo: o
-    texto impresso no produto (marca, volume, unidade) nao pode ser
-    reescrito pela IA so porque ela esta compondo um card ao redor dele.
+    """Prompt do card de ficha tecnica, na linguagem visual APROVADA no piloto.
+
+    A referencia sao os `card-01..08` gerados por `~/Desktop/piloto-cards-ia/
+    gerar.py` e validados pelo Gabriel: bloco de cor amostrado do proprio
+    produto, textura de papel, luz radial suave, painel neutro embaixo com
+    titulo dominante e cada linha precedida de um icone de linha ilustrado.
+
+    Duas adaptacoes conscientes em relacao ao piloto — copiar literalmente
+    daria um card pior:
+
+    1. QUADRADO, nao 3:4. O piloto rodou com `size="768x1024"`, mas
+       `OpenAIEditEngine` pede sempre o maior QUADRADO do modelo (1200x1200
+       no gpt-image-2) e `_prepare_image_for_upload` normaliza para quadrado
+       de qualquer forma. Um 3:4 chegaria ao ML com tarja branca em cima e
+       embaixo. As proporcoes de "dois tercos / um terco" viram ~60/40.
+
+    2. O piloto tinha 3 bullets de BENEFICIO redigidos a mao, com icone
+       nomeado um a um ("a droplet, a brand seal, a bottle"). Aqui o conteudo
+       e ficha tecnica ("Rotulo: valor", 2 a 3 linhas, ate 50 chars), e os
+       atributos variam por categoria — nao da para nomear o icone de cada
+       linha, entao a instrucao pede um icone cujo sentido acompanhe a linha.
+
+    A clausula CRITICAL vem do piloto palavra por palavra: e a licao da Fase
+    5c, quando o motor reescreveu "100ml" como "160ml" e "wepink" como
+    "weoink" num anuncio real.
+
+    O QUE MUDOU EM RELACAO AO PROMPT ANTERIOR, e por que: o prompt anterior
+    pedia "no clutter, no extra decorative elements" e proibia "relight" e
+    "unrelated backgrounds". Isso e o oposto do estilo aprovado, que TROCA o
+    fundo por um bloco de cor e RE-ILUMINA a cena. Manter as duas coisas
+    juntas seria a mesma auto-contradicao que fazia a Frente A ser reprovada
+    por construcao (ver `_pick_prompt` em `cover_variant_service`): pedir ao
+    motor exatamente aquilo que a instrucao seguinte proibe. A fidelidade que
+    importa — forma, cor e TEXTO IMPRESSO do produto — continua exigida; o
+    que se liberou explicitamente foi so a encenacao ao redor dele.
     """
-    bullets_block = "\n".join(f"- {b}" for b in bullets)
+    linhas = "\n".join(f'  {i}. "{b}"' for i, b in enumerate(bullets, start=1))
     return (
-        "Compose a technical-specs card for an e-commerce product listing,\n"
-        "using this exact product photo as the visual anchor.\n\n"
-        f'Render the title "{title}" prominently, and below or beside it these\n'
-        "bullet points as a clean vertical list, exactly as given, verbatim —\n"
-        "do not translate, paraphrase, correct or invent additional specs:\n"
-        f"{bullets_block}\n\n"
-        "Layout: keep the product photo clearly visible and unobstructed; place\n"
-        "the title and bullets in a legible text block, clean sans-serif font,\n"
-        "high contrast, no clutter, no extra decorative elements.\n\n"
-        "FORBIDDEN — the product itself must be pixel-faithful to the reference:\n"
-        "do not redraw, reshape, recolor, rotate or relight the product body; do not\n"
-        "add, remove or move any object; do not introduce props, hands or\n"
-        "unrelated backgrounds.\n\n"
+        "Design a premium e-commerce specification card in SQUARE format for a\n"
+        "product listing, built around the product in the reference image.\n\n"
+        "LAYOUT\n"
+        "- Upper ~60%: the product from the reference image, standing on a soft\n"
+        "  studio surface with a gentle contact shadow, filling the space\n"
+        "  confidently.\n"
+        "- Background behind the product: a large colour block sampled from the\n"
+        "  product itself, with a subtle paper-like texture and a soft radial\n"
+        "  light behind it. Not flat white.\n"
+        "- Lower ~40%: a clean panel in a light neutral tone that contrasts with\n"
+        "  the colour block, holding the title and the specification lines.\n\n"
+        "TEXT TO RENDER (Brazilian Portuguese, exactly as written, verbatim —\n"
+        "do not translate, paraphrase, correct, reorder or invent additional\n"
+        "specifications)\n"
+        f'- Headline, large and bold: "{title}"\n'
+        "- Specification lines, each preceded by a small illustrated line icon\n"
+        "  whose meaning matches that line:\n"
+        f"{linhas}\n\n"
+        "TYPOGRAPHY\n"
+        "- Modern geometric sans-serif. Clear hierarchy: headline dominant,\n"
+        "  specification lines calm and readable. Generous margins. Nothing\n"
+        "  cropped at the edges.\n\n"
+        "ALLOWED — staging around the product: replace the background with the\n"
+        "colour block described above, add studio lighting and a contact shadow,\n"
+        "and adjust framing.\n\n"
+        "FORBIDDEN — the product must keep its identity: do not reshape, recolor\n"
+        "or re-proportion the product body; do not add, remove or move any\n"
+        "object; no props, hands, logos, watermarks, prices or badges, and no\n"
+        "decorative elements beyond the icons and the panel described above.\n\n"
         "CRITICAL: do not alter, redraw, translate, correct or re-render ANY text\n"
         "printed on the product or its packaging. Brand names, product names, volumes\n"
         "and measurement units must be preserved exactly as they appear, character for\n"
         "character. Never change a number or a unit. If any text is unreadable, keep it\n"
         "unreadable rather than inventing plausible text.\n\n"
-        "The result must be recognisable as the same photograph of the same physical\n"
-        "unit, now composed into a clean specs card."
+        "The product must remain recognisable as the same physical unit from the\n"
+        "reference photograph, now composed into a finished specification card."
     )
 
 

@@ -296,3 +296,72 @@ class TestSpecsVariantUsesDeterministicBullets:
                 await generate_specs_variant(mock_db, MagicMock(), "token")
 
             mock_engine_cls.return_value.edit.assert_not_awaited()
+
+
+class TestSpecsPromptHerdaEstiloDoPiloto:
+    """O prompt tem que pedir a linguagem visual que o Gabriel aprovou.
+
+    A referencia sao os `card-01..08` do piloto (`~/Desktop/piloto-cards-ia`):
+    bloco de cor tirado do proprio produto, textura de papel, luz radial,
+    painel neutro com titulo dominante e bullets com icone ilustrado. O prompt
+    anterior pedia o oposto disso ("no extra decorative elements") e produzia
+    um card plano que ninguem tinha validado.
+    """
+
+    @staticmethod
+    def _prompt():
+        """Espaco em branco normalizado: a quebra de linha do prompt e
+        cosmetica, e sem isso a assercao passa a medir ONDE a linha quebrou em
+        vez do que o prompt pede — "radial light" partido ao meio reprovaria
+        um prompt correto."""
+        import re
+
+        from app.services.specs_variant_service import _build_specs_prompt
+
+        bruto = _build_specs_prompt(
+            "Especificações Técnicas",
+            ["Marca: Wepink", "Modelo: Martin", "Tipo de perfume: Água de colônia"],
+        )
+        return re.sub(r"\s+", " ", bruto).lower()
+
+    def test_pede_bloco_de_cor_tirado_do_produto(self):
+        p = self._prompt()
+        assert "colour block" in p or "color block" in p
+        assert "sampled from the product" in p
+        assert "not flat white" in p
+
+    def test_pede_textura_e_luz_do_piloto(self):
+        p = self._prompt()
+        assert "paper" in p and "texture" in p
+        assert "radial light" in p
+
+    def test_pede_icone_por_linha_e_hierarquia_tipografica(self):
+        p = self._prompt()
+        assert "icon" in p
+        assert "geometric sans-serif" in p
+        assert "hierarchy" in p
+
+    def test_nao_pede_mais_ausencia_de_elementos_decorativos(self):
+        """A instrucao que achatava o card. Mantê-la ao lado do pedido de
+        bloco de cor e icone seria a mesma auto-contradicao que reprovava a
+        Frente A por construcao."""
+        assert "no extra decorative elements" not in self._prompt()
+
+    def test_mantem_os_bullets_verbatim(self):
+        p = self._prompt()
+        assert "verbatim" in p
+        assert "do not translate" in p
+        assert "marca: wepink" in p
+
+    def test_mantem_a_clausula_critical_do_texto_impresso(self):
+        from app.services.specs_variant_service import _build_specs_prompt
+
+        p = _build_specs_prompt("T", ["a", "b"])
+        assert "CRITICAL" in p
+        assert "character for" in p
+        assert "Never change a number or a unit." in p
+
+    def test_proibe_alterar_a_identidade_do_produto(self):
+        p = self._prompt()
+        assert "do not reshape" in p
+        assert "watermark" in p or "badge" in p
