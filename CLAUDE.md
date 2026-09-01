@@ -36,7 +36,11 @@ Sistema web para automação de criação e publicação de anúncios no Mercado
 | Fase 5a | ✅ | Artefatos de produção: `Dockerfile.prod` multi-stage non-root, `docker-compose.prod.yml`, `.dockerignore`, limites de memória. Correção de segurança: `/openapi.json` fechado fora de development |
 | Fase 5b | ✅ | Deploy na VPS: vhost + TLS, `.env` de produção gerado do zero, stack no ar, migrations aplicadas. Correção de 2 bugs de OAuth |
 | Fase 5c | ✅ | **Primeiro anúncio real publicado**: `MLB5145387291` (SKU 37, Wepink Martin). Validação de `allowed_values`, modo catálogo (`family_name`), cards a partir da capa determinística |
-| Fase 6 | 🔲 | Frontend em produção (Vercel ou na própria VPS) + revisão humana de categoria |
+| Frentes A e B | ✅ | Variante de capa e ficha técnica por IA sob demanda: `cover_variant_service`, `specs_variant_service`, `promote_cover`, `promote_specs`, `replace_item_pictures`. Candidato nasce `approved=False` e só vai ao ar por ação humana |
+| Ficha ancorada em atributo | ✅ | `build_specs_card` monta os bullets do `value_name` real — o `card_specs` Pillow e a variante de IA param de depender da redação do LLM |
+| **Esquema de 5 posições** | ✅ | Padrão de anúncio de **produto único** em categoria-folha com perfil (hoje só MLB6284). Em produção desde 2026-09-01 (`083ad2e`) |
+| SKU 38 | ✅ | 2º anúncio real: `MLB7574387170` (Body Splash Fatal Black For Her 200ml). Publicado com 8 fotos e depois trocado para as 5 do esquema novo |
+| Fase 6 | 🔲 | Frontend em produção (Vercel ou na própria VPS) + revisão humana de categoria + **tela de revisão/promoção de candidatos** |
 
 > **Railway e Vercel foram descartados para o backend.** A escolha final foi
 > VPS própria, que já hospedava outros apps da 360.
@@ -291,12 +295,24 @@ instanciação. Os prompts ficam centralizados em `ai/prompts.py` como
 `_call(prompt, max_tokens, temperature)`, e `claude.py` reusa `_extract_json`
 de `gemini.py` em vez de duplicar.
 
-### Atributo de lista: validar contra `allowed_values`
-Atributo com lista de valores permitidos só aceita valor que exista na lista
-**daquela categoria**. `submit_attributes` recusa com **422** listando os
-aceitos, e resolve o `value_id` sozinho quando o cliente manda só o nome;
-`_save_attributes` descarta prefill que não casa, em vez de gravar nome com
-`value_id` nulo.
+### Atributo de lista: `allowed_values` só é enumeração quando o tipo é `list`
+
+O ML usa `values` de **dois jeitos**, e o `value_type` distingue:
+
+| Tipo | Significado de `values` | Comportamento |
+|---|---|---|
+| `list` | enumeração fechada | valor fora dela é descartado / **422** |
+| `string` | lista de **sugestões** | texto livre passa; o ML resolve o `value_id` |
+
+Tratar os dois igual bloqueava dado legítimo: `BRAND` em MLB6284 devolve 24
+sugestões, "Wepink" não está entre elas — e mesmo assim o anúncio
+`MLB5145387291` está **ativo** nessa categoria com
+`BRAND value_id='13065330' value_name='Wepink'`, id que o próprio ML atribuiu.
+A regra vale nos **dois** pontos que precisam concordar: `_save_attributes`
+(prefill) e `_validar_valor` (submit).
+
+`submit_attributes` recusa com **422** listando os aceitos, e resolve o
+`value_id` sozinho quando o cliente manda só o nome.
 
 Sem isso o erro só aparece na publicação, como
 `Attribute [X] is not valid, item values [(null:Y)]` — mensagem obscura, no
@@ -398,6 +414,13 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 > imagem de IA que ninguém tinha verificado.
 
 - `image_benefit_card_service.py` — renderizador Pillow: `render_benefit_card()` → JPEG 1200×1200, `CardRenderError`. Foto em contain-fit na faixa y=0..640, bloco de texto centralizado em y=700..1110 com clamp que impede desenho fora do canvas (descarta o último bullet se não couber)
+- `cover_variant_service.py` — Frente A: `generate_cover_variant()` (candidato `cover_ai`), `promote_cover()`, `_load_latest_deterministic_cover()`. `_pick_prompt()` devolve **sempre** o prompt leve — capa branca em toda categoria. `_COVER_PROMPT_RICH` fica no módulo **dormant**, para o toggle por seller no frontend; há teste que falha se alguém apagá-lo
+- `specs_variant_service.py` — Frente B: `generate_specs_variant()` (candidato `specs_ai`), `promote_specs()`, `_build_specs_prompt()`. O prompt **não tem título**: a ficha sai só com bullets, e proíbe cabeçalho explicitamente — omitir sem proibir convida o motor a inventar um
+- `image_position_profiles.py` — tabela `{categoria_folha: PositionProfile}` do esquema de 5 posições. Carrega canvas **e** conteúdo, então um perfil novo (Moda em 4:5) é uma linha a mais. `detail_caption_for()` deriva a legenda do SKU, não sorteia: regerar não pode trocar a legenda por baixo de uma revisão já feita
+- `image_position_prompts.py` — prompts das posições 2, 3 e 4. Cláusula `CRITICAL` **idêntica** nas três, palavra por palavra
+
+> **`build_specs_card` continua devolvendo `title`.** A remoção do cabeçalho
+> vale só para o prompt da IA; o card Pillow (`card_specs`) mantém o dele.
 
 ### backend/app/api/v1/endpoints/
 - `health.py`, `auth.py`, `listings.py`
@@ -428,8 +451,14 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 - `test_image_benefit_card_service.py` — geometria do card. Os testes de layout aferem a geometria **calculada de forma independente** das constantes, mais um caso pixel-level que garante que nada é desenhado abaixo de y=1112
 - `test_image_tasks_i2i.py` — `TestBenefitCardsIntegration`: ordem dos 3 cards, `sort_order` contíguo, falha de 1 card não derruba os outros, nenhum card sem individual salva, kit não gera card
 - `test_ml_oauth_state.py` — state do OAuth no Redis (incluindo o cenário "inicia num worker, completa em outro") e destino pós-callback com/sem `FRONTEND_URL`
+- `test_cover_variant.py` / `test_cover_promote.py` — Frente A: capa sempre branca, prompt rico dormant, candidato reprovado guarda os bytes, promoção idempotente e autocurável
+- `test_specs_variant.py` / `test_specs_promote.py` — Frente B: ficha sem título, promoção lendo o slot da galeria em vez de cravar número
+- `test_specs_card_deterministic.py` — bullets do `value_name` real (200 execuções → 1 resultado) e a linguagem visual unificada do prompt
+- `test_cinco_posicoes.py` — roteamento por categoria-folha, nenhuma posição nasce aprovada, canvas do perfil, falha de uma não derruba as outras, capa determinística como fallback invisível
+- `test_allowed_values_por_tipo.py` — `values` é enumeração só em `value_type == "list"`; EAN do produto chegando ao GTIN
+- `test_ml_replace_pictures.py` — substituição TOTAL de fotos: recusa lista vazia, ID repetido e perda de `must_keep`
 
-> Suíte completa: **274 passed**. Os 2 warnings (`coroutine '_generate_images_async'
+> Suíte completa: **421 passed**. Os 2 warnings (`coroutine '_generate_images_async'
 > was never awaited`) são pré-existentes em `test_image_tasks.py`.
 
 ### Migrations aplicadas (ordem cronológica)
@@ -437,6 +466,8 @@ Ver `app/core/security.py`: `hash_password()` e `verify_password()`.
 - `08c6a96e1502` — coluna `allowed_values JSONB` em `listing_attributes`
 - *(várias)* — multi-account, batch_import, product_images, products
 - `d3aa35ba6d71` — `products.model` + `listings.sku_model` + fix índices
+- `c1d5e8b3a207` — `validation_error` em `listing_images`
+- `2f769b55c74e` — `image_bytes` + `review_seconds` em `listing_images` (head atual)
 
 ---
 
@@ -468,19 +499,58 @@ MLValidationError (400 do ML) ──► failed (sem retry automático)
 
 ## Ordem das imagens do anúncio
 
-`sort_order` no caminho image-to-image, 1 SKU:
+Há **dois caminhos**, escolhidos por categoria em `_try_i2i_generation`.
+
+### Caminho novo — esquema de 5 posições (produto único, categoria com perfil)
+
+Vale quando `profile_for_category(listing.ml_category_id)` acha um perfil em
+`image_position_profiles.py`. Hoje: só **MLB6284**.
+
+| # | `kind` | Origem | Entrada |
+|---|---|---|---|
+| 0 | `cover_ai` | IA, prompt leve (fundo branco) | capa determinística |
+| 1 | `presentation` | IA | **todas** as fotos brutas do SKU |
+| 2 | `benefits_ai` | IA, copy do LLM (`card_benefits`) | 1ª foto |
+| 3 | `detail_ai` | IA, legenda fixa do perfil | `pick_detail_source()` (3ª foto se existir) |
+| 4 | `specs_ai` | IA, bullets do `value_name` real | capa determinística |
+
+Canvas **1200×1200**, vindo de `PositionProfile.canvas` — não de constante do
+worker. Cada posição é independente, com 2 tentativas; falha em uma não derruba
+as outras. A capa determinística é calculada mas **não vira linha visível**: só
+é persistida se a posição 0 por IA falhar por completo.
+
+**Todas nascem `approved=False`, e categoria com perfil nunca auto-aprova nem
+em batch.** Sem esse guard o batch aprovaria as posições 1–3 e publicaria um
+anúncio **sem capa e sem ficha**, porque essas duas são `CANDIDATE_KINDS` e
+ficariam de fora da varredura.
+
+> **Vertical seria destrutivo aqui.** `normalize_to_square` **recorta o
+> centro**, não adiciona borda: um canvas 3:4 perderia o painel de texto das
+> posições 1–3 — o texto que justifica a existência delas — e **ainda passaria
+> no QA**, porque `validate_image` não exige quadrado. O ML recomenda 1200×1200
+> para Beleza e Cuidado Pessoal; o 4:5 é recomendação de Moda/Vestuário.
+
+Perfil é chaveado pela **categoria-folha, nunca pela raiz**: a raiz de MLB6284
+é MLB1246 (Beleza), com 13 filhas — chavear nela aplicaria "Frasco elegante" a
+esmalte e álcool em gel. Categoria sem perfil **cai no caminho antigo** e não
+herda o da irmã nem o da raiz.
+
+### Caminho antigo — demais categorias, e kits
 
 | # | `kind` | Origem |
 |---|---|---|
 | 0 | `cover_deterministic` | recorte por distância de cor, sem custo de IA — só quando a foto bruta tem fundo uniforme |
-| 1..n | `individual` | edição i2i da foto bruta do seller (2 variantes por foto) |
+| 1..n | `individual` | edição i2i da foto bruta do seller (2 variantes por foto, limitado a `[:RAW_PHOTOS_MIN]`) |
 | n+1 | `card_benefits` | Pillow + copy LLM |
 | n+2 | `card_usage` | Pillow + copy LLM |
-| n+3 | `card_specs` | Pillow + copy LLM |
+| n+3 | `card_specs` | Pillow + bullets determinísticos do atributo |
 
 Se a capa determinística falhar, tudo desloca uma posição para trás e a 1ª
 individual assume o `sort_order` 0. **Cards nunca ocupam a posição 0** — o ML
 não aceita texto/infográfico na capa, só da 2ª imagem em diante.
+
+O ramo de **kit** (`len(skus) > 1`) segue inalterado e é hoje **inalcançável**:
+`resolve_listing_skus` sempre devolve 1 SKU.
 
 > **Gap conhecido:** cards **não** gravam linha em `ProductImage`, porque a copy
 > é derivada do `selected_title` e dos atributos *daquele* anúncio — reusar em
@@ -521,7 +591,26 @@ PUT    /api/v1/listings/{id}/attributes
 POST   /api/v1/listings/{id}/pipeline/generate_images
 POST   /api/v1/listings/{id}/images/approve
 POST   /api/v1/listings/{id}/pipeline/publish
+POST   /api/v1/listings/{id}/activate                    published_paused → published
+
+POST   /api/v1/listings/{id}/images/cover-ai-variant     candidato cover_ai (sort_order 90)
+POST   /api/v1/listings/{id}/images/specs-ai-variant     candidato specs_ai (sort_order 91)
+POST   /api/v1/listings/{id}/images/{img}/promote-cover  quem ocupa sort_order 0
+POST   /api/v1/listings/{id}/images/{img}/promote-specs  quem ocupa o slot de ficha
 ```
+
+> **`promote_specs` NÃO tem posição fixa, `promote_cover` tem.** A capa é 0 por
+> invariante do domínio (`COVER_SORT_ORDER`). A ficha não: `card_specs` nasce em
+> `start_sort_order + saved`, então sua posição depende de quantas individuais o
+> anúncio gerou — 7 no SKU 37, 5 num anúncio com 2 individuais. `promote_specs`
+> **lê** o slot da ficha que já está na galeria em vez de impor um; cravar um
+> `SPECS_SORT_ORDER` mudaria a numeração de todo anúncio já publicado.
+
+> **`replace_item_pictures` (em `publish_service`) é substituição TOTAL.** O PUT
+> de `pictures` no ML não faz merge: mandar 2 IDs num item de 8 fotos deixa o
+> anúncio com 2. A função recusa lista vazia, ID repetido e lista que perca
+> algum `must_keep`, nomeando o que sumiria. `fetch_item` é GET **autenticado** —
+> a chamada pública devolve 403.
 
 ---
 
@@ -589,6 +678,28 @@ O `category_service.py` pré-preenche estes atributos a partir dos dados do prod
 | Marca obrigatória não adicionada | "Sem marca" enviado ao ML | Skip se empty ou == "sem marca" |
 | Modelo obrigatório não adicionado | Campo inexistente no sistema | Campo `model` adicionado ao catálogo |
 | Fotos com menos de 500 pixels | Gemini Imagen fast pode gerar < 500px | `ensure_dimensions()` upscale para 1024px |
+
+---
+
+## Categoria: o que aprendemos com perfumaria
+
+**Não existe categoria "body splash" no ML.** Perfume, deo colônia e body splash
+caem todos em **`MLB6284`** (`Beleza e Cuidado Pessoal > Perfumes`), que é
+**folha**, filha direta da raiz e a única das 13 filhas de Beleza que não se
+subdivide. A distinção de tipo vive no atributo `PERFUME_TYPE`, não na árvore.
+
+> **`domain_discovery` erra feio com termo curto.** Para `"body splash"` ele
+> devolve **`MLB269718` Águas Minerais em 1º lugar**, com Perfumes em 2º — e
+> `category_service._predict_category` pega `results[0]`. O que salvou o SKU 38
+> foi o título trazer marca e "Colônia". **Não há revisão humana de categoria
+> hoje** — é o item pendente da Fase 6.
+
+Cuidado com a homônima: **`MLB178938`** também se chama "Perfumes", mas é
+`Pet Shop > Cães > … > Perfumes`. É a origem do caso `"Colônia"` — valor válido
+lá e inexistente em MLB6284, onde o equivalente é `"Água de colônia"`.
+
+**O ML reescreve `UNIT_VOLUME`:** enviamos `"200 ml"` e ele armazena `"200 mL"`.
+Não é erro; só não comparar enviado × publicado nesse campo.
 
 ---
 
