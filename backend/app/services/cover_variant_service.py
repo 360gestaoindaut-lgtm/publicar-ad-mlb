@@ -44,17 +44,33 @@ class CoverVariantError(RuntimeError):
 # `_NO_TEXT_EDIT_RULE` em `image_tasks.py` para o precedente do mesmo risco.
 #
 # Duas variantes, escolhidas pela categoria (ver `_pick_prompt`). Este prompt
-# RICO troca o fundo branco por gradiente/textura — o que é exatamente o que
-# `validate_image` reprova quando a categoria-raiz exige fundo branco puro.
+# RICO troca o fundo branco — o que é exatamente o que `validate_image` reprova
+# quando a categoria-raiz exige fundo branco puro.
+#
+# ⚠️ NÃO VALIDADO VISUALMENTE. A encenação abaixo herda a linguagem aprovada
+# nos cards do piloto (bloco de cor amostrado do produto, textura de papel, luz
+# radial — ver `_build_specs_prompt` em `specs_variant_service`), mas essa
+# linguagem foi validada num CARD, não numa CAPA. Nenhuma imagem saída deste
+# prompt foi revisada por ninguém até aqui, porque ele só roda em categoria que
+# NÃO exige fundo branco, e o único anúncio do piloto (SKU 37, MLB6284) exige.
+# Validar depende de um SKU de outra categoria; até lá, tratar o resultado
+# deste caminho como não confiável e revisar antes de promover.
+#
+# A diferença de destino em relação ao card não é detalhe: isto pode virar a
+# capa (`sort_order=0`), onde o ML não aceita texto nem infográfico — por isso
+# a cláusula FORBIDDEN proíbe texto explicitamente, coisa que o prompt do card
+# não faz (lá o texto é o conteúdo).
 _COVER_PROMPT_RICH = (
-    "Place this exact product photo into a subtle studio environment.\n\n"
-    "ALLOWED: replace the flat white background with a soft neutral gradient or a\n"
-    "subtle surface texture; add gentle directional lighting and a soft contact\n"
-    "shadow beneath the product; adjust framing margins only.\n\n"
-    "FORBIDDEN — the product itself must be pixel-faithful to the reference:\n"
-    "do not redraw, reshape, recolor, rotate or relight the product body; do not\n"
-    "add, remove or move any object; do not introduce props, hands, backgrounds\n"
-    "with objects, logos, badges, borders or decorative elements.\n\n"
+    "Place this exact product photo into a premium studio scene.\n\n"
+    "ALLOWED — staging around the product: replace the flat white background\n"
+    "with a large colour block sampled from the product itself, carrying a\n"
+    "subtle paper-like texture and a soft radial light behind the product; add\n"
+    "gentle directional lighting and a soft contact shadow beneath it; adjust\n"
+    "framing margins. Not flat white.\n\n"
+    "FORBIDDEN — the product must keep its identity: do not reshape, recolor or\n"
+    "re-proportion the product body; do not add, remove or move any object; no\n"
+    "props, hands, logos, watermarks, prices, badges, borders, captions, added\n"
+    "text or decorative elements of any kind.\n\n"
     "CRITICAL: do not alter, redraw, translate, correct or re-render ANY text\n"
     "printed on the product or its packaging. Brand names, product names, volumes\n"
     "and measurement units must be preserved exactly as they appear, character for\n"
