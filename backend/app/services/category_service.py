@@ -199,7 +199,23 @@ class CategoryService:
             value_name: str | None = prefill.get(attr_id)
             value_id: str | None = None
 
-            # Tenta casar value_id na lista de valores permitidos
+            # `values` significa coisas diferentes conforme o `value_type`:
+            #
+            #   - `list`  -> ENUMERACAO fechada. Valor fora dela e recusado pelo
+            #     ML na publicacao, entao descartar aqui e o certo.
+            #   - `string` -> lista de SUGESTOES. O ML aceita texto livre e
+            #     resolve o id por conta propria.
+            #
+            # Tratar os dois igual descartava marca legitima: BRAND em MLB6284
+            # devolve 24 sugestoes, "Wepink" nao esta entre elas, e mesmo assim
+            # o anuncio MLB5145387291 esta ATIVO nessa categoria com
+            # `BRAND value_id='13065330' value_name='Wepink'` — id que o proprio
+            # ML atribuiu. Descartar bloqueava o cadastro sem que houvesse
+            # problema real.
+            enumeracao_fechada = attr_type == "list"
+
+            # Tenta casar value_id na lista — vale para os dois tipos: quando
+            # casa, aproveitamos o id e o nome exato do ML.
             if value_name and allowed:
                 casou = False
                 for v in allowed:
@@ -221,7 +237,7 @@ class CategoryService:
                 # Acontece de verdade quando o prefill vem de outra categoria:
                 # "Colônia" e valido em MLB178938 (perfume pet) e inexistente em
                 # MLB6284 (perfumes), onde o equivalente chama "Água de colônia".
-                if not casou:
+                if not casou and enumeracao_fechada:
                     logger.warning(
                         "atributo_descartado attribute_id=%s valor=%r categoria=%s "
                         "motivo=fora_dos_allowed_values opcoes=%s",
@@ -232,6 +248,17 @@ class CategoryService:
                     )
                     value_name = None
                     value_id = None
+                elif not casou:
+                    # Sugestao, nao enumeracao: mantem o texto livre e deixa o
+                    # ML resolver o id. Logado em info porque nao e problema —
+                    # so o registro de que a marca/valor nao estava na lista.
+                    logger.info(
+                        "atributo_texto_livre attribute_id=%s valor=%r categoria=%s "
+                        "motivo=fora_das_sugestoes_mas_tipo_nao_e_lista",
+                        attr_id,
+                        value_name,
+                        listing.ml_category_id,
+                    )
 
             if not value_name and is_required:
                 has_unfilled_required = True

@@ -12,6 +12,24 @@ async def _predict_category_async(listing_id: str, ean: str | None = None) -> di
         result = await db.execute(select(Listing).where(Listing.id == listing_id))
         listing = result.scalar_one()
 
+        # O EAN vive em `products.ean` desde o cadastro, mas NINGUEM o passava:
+        # `select_title` e os gatilhos batch despacham
+        # `predict_category.delay(listing_id)` sem argumento, e o default era
+        # None — entao o prefill de GTIN nunca acontecia e o atributo, que e
+        # obrigatorio em varias categorias, nascia vazio. No SKU 37 isso passou
+        # despercebido porque o GTIN foi preenchido a mao na Fase 5c.
+        #
+        # Fallback, nao sobrescrita: quem chamar informando o EAN continua
+        # mandando o dele.
+        if ean is None and listing.product_id:
+            from app.models.product import Product
+
+            product = (
+                await db.execute(select(Product).where(Product.id == listing.product_id))
+            ).scalar_one_or_none()
+            if product is not None:
+                ean = product.ean
+
         service = CategoryService(db)
         await service.predict_and_save(listing, ean=ean)
         await db.commit()

@@ -176,6 +176,14 @@ class ListingService:
                 # cliente que manda so o nome nao precisa saber o id.
                 return v.get("id"), nome
 
+        # Nao casou. So e ERRO quando o atributo e uma ENUMERACAO fechada
+        # (`value_type == "list"`). Em `string`, a lista do ML e de sugestoes:
+        # ele aceita texto livre e resolve o id sozinho — recusar aqui barrava
+        # a marca real do produto. Mesma regra de `category_service`, ver o
+        # comentario la para a evidencia (BRAND/Wepink em MLB6284).
+        if attr.attribute_type != "list":
+            return value_id, value_name
+
         aceitos = [v.get("name") for v in opcoes]
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
