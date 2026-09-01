@@ -308,7 +308,13 @@ class TestGenerateCoverVariantPrompt:
 
         prompt = mock_engine_cls.return_value.edit.await_args.kwargs["prompt"]
         assert "CRITICAL" in prompt
-        assert "pixel-faithful" in prompt
+        # Afere a GARANTIA, nao a expressao. O prompt rico dizia
+        # "pixel-faithful" ao lado de uma clausula que manda trocar o fundo e
+        # re-iluminar a cena — pedir e proibir a mesma coisa. A exigencia que
+        # sobrevive e a que importa: nao deformar, nao recolorir, nao
+        # re-proporcionar o corpo do produto.
+        for exigencia in ("do not reshape", "recolor", "re-proportion"):
+            assert exigencia in prompt, prompt
 
 
 class _DuplicateCoversResult:
@@ -479,9 +485,34 @@ class TestCoverVariantPromptDependsOnCategory:
         assert "contact shadow" in lowered
 
     @pytest.mark.asyncio
-    async def test_non_white_bg_category_keeps_the_richer_prompt(self):
-        prompt = await self._capture_prompt(requires_white_bg=False)
-        assert "gradient" in prompt.lower()
+    async def test_non_white_bg_category_gets_the_richer_staging(self):
+        """O prompt rico herdou a linguagem visual aprovada nos cards do
+        piloto. Espaco em branco normalizado: a quebra de linha e cosmetica, e
+        sem isso a assercao mediria ONDE a linha quebrou — "radial light"
+        partido ao meio reprovaria um prompt correto."""
+        import re
+
+        prompt = re.sub(
+            r"\s+", " ", await self._capture_prompt(requires_white_bg=False)
+        ).lower()
+
+        assert "colour block sampled from the product itself" in prompt
+        assert "paper-like texture" in prompt
+        assert "radial light" in prompt
+        assert "not flat white" in prompt
+
+    @pytest.mark.asyncio
+    async def test_cover_prompt_forbids_added_text_in_both_variants(self):
+        """A capa e `sort_order=0`, e o ML nao aceita texto nem infografico
+        ali. A proibicao vale para as duas variantes: a rica passou a permitir
+        encenacao mais ousada, e e justamente ai que o motor tende a inventar
+        legenda."""
+        import re
+
+        for wb in (True, False):
+            prompt = re.sub(r"\s+", " ", await self._capture_prompt(requires_white_bg=wb))
+            assert "text" in prompt.lower()
+            assert "logos" in prompt.lower()
 
     @pytest.mark.asyncio
     async def test_both_prompts_keep_the_critical_text_clause(self):

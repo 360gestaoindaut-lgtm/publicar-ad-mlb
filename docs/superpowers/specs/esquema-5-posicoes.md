@@ -40,6 +40,22 @@ verdade até decisão explícita de substituição.
 | Posição 5 — ficha técnica sob demanda | ✅ disponível sob demanda (Frente B): `POST /api/v1/listings/{id}/images/specs-ai-variant` gera o candidato `specs_ai`, renderizado por IA a partir dos bytes salvos da capa determinística, para comparação A/B com o `card_specs` (Pillow) já produzido pelo pipeline. Nunca substitui o `card_specs` automaticamente. |
 | Posições 2, 3 | 🔲 não implementadas — o pipeline de produção continua como está |
 
+> **O ✅ da Posição 1 é sobre o endpoint existir, não sobre a imagem prestar.**
+> A variante de capa tem dois prompts, escolhidos pela categoria
+> (`_pick_prompt` em `cover_variant_service.py`):
+>
+> - **Prompt leve** (categoria que exige fundo branco): validado visualmente
+>   no SKU 37 / MLB6284 — passou no QA e a imagem foi revisada.
+> - **Prompt rico** (demais categorias): ⚠️ **NÃO VALIDADO VISUALMENTE.**
+>   Herda a linguagem aprovada nos cards do piloto, mas essa linguagem foi
+>   aprovada num **card**, não numa **capa**, e nenhuma imagem saída deste
+>   prompt foi revisada por ninguém. Ele não roda no SKU 37, porque MLB6284
+>   exige fundo branco. Validar depende de um SKU de outra categoria.
+>
+> Até esse teste acontecer, resultado do prompt rico é candidato a revisar,
+> não caminho confiável — e nada aqui deve ser lido como "confirmado
+> funcionando".
+
 ### Quem pode ocupar a posição 1 (`sort_order=0`)
 
 A posição de capa é **reservada** a `kind` de capa (`cover_deterministic` ou
