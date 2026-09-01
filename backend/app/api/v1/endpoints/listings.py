@@ -323,6 +323,32 @@ async def promote_cover(
     return ListingSummary.model_validate(listing)
 
 
+@router.post("/{listing_id}/images/{image_id}/promote-specs", response_model=ListingSummary)
+async def promote_specs(
+    listing_id: UUID,
+    image_id: UUID,
+    active_seller=Depends(get_active_seller),
+    db: AsyncSession = Depends(get_db),
+):
+    """Decide qual imagem ocupa o slot de ficha técnica (Frente B).
+
+    Simétrico a `promote_cover`, com uma diferença: a capa tem posição fixa
+    (0) e a ficha técnica **não tem** — `promote_specs` lê o `sort_order` da
+    ficha que já está na galeria e o alvo assume esse lugar. Ver
+    `PROMOTABLE_SPECS_KINDS` no model para o porquê.
+
+    Alvo de outro kind → 422 (inclusive capa, que tem endpoint próprio).
+    Alvo de outro anúncio → 404. A ficha rebaixada vira candidata, nunca é
+    apagada. Nada aqui roda automaticamente.
+    """
+    from app.services.specs_variant_service import promote_specs as _promote_specs
+
+    svc = ListingService(db)
+    listing = await svc.get_or_404(listing_id, active_seller.id)
+    await _promote_specs(db, listing, image_id)
+    return ListingSummary.model_validate(listing)
+
+
 @router.post("/{listing_id}/images/specs-ai-variant", response_model=ImageOut, status_code=201)
 async def generate_specs_ai_variant(
     listing_id: UUID,

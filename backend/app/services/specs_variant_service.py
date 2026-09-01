@@ -24,11 +24,20 @@ o tipo do perfume do SKU 37 saiu parafraseado numa execucao e correto em
 outra. Ficha tecnica e dado, nao redacao.
 """
 import logging
+from uuid import UUID
 
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.orm import defer
 
 from app.models.listing_attribute import ListingAttribute
-from app.models.listing_image import SPECS_AI_KIND, ListingImage
+from app.models.listing_image import (
+    CANDIDATE_SORT_ORDER_FLOOR,
+    COVER_SORT_ORDER,
+    PROMOTABLE_SPECS_KINDS,
+    SPECS_AI_KIND,
+    ListingImage,
+)
 from app.services.cover_variant_service import _load_latest_deterministic_cover
 
 logger = logging.getLogger(__name__)
@@ -202,3 +211,129 @@ async def generate_specs_variant(db, listing, access_token: str) -> ListingImage
     await db.commit()
     logger.info("specs_variant listing_id=%s result=uploaded", listing.id)
     return candidate
+
+
+async def promote_specs(db, listing, image_id: UUID) -> None:
+    """Troca qual imagem ocupa o slot de ficha tecnica na galeria (Frente B).
+
+    Simetrico a `cover_variant_service.promote_cover`, com uma diferenca que
+    NAO e detalhe de implementacao: a capa tem posicao fixa (0) e esta funcao
+    LE a posicao em vez de impor uma. Ver `PROMOTABLE_SPECS_KINDS` no model
+    para o porque — resumido: `card_specs` nasce em `start_sort_order + saved`,
+    entao seu numero depende de quantas individuais o anuncio gerou, e cravar
+    um valor mudaria a numeracao da galeria de todo anuncio ja publicado.
+
+    O alvo precisa ser deste anuncio (senao 404) e ter `kind` em
+    `PROMOTABLE_SPECS_KINDS` (senao 422). Promover uma CAPA por aqui tambem da
+    422: capa tem endpoint proprio, e aceita-la aqui a mandaria para o meio da
+    galeria deixando o slot 0 vago.
+
+    O alvo assume o `sort_order` da ficha que hoje esta na galeria e
+    `approved=True`. Toda outra linha de kind de ficha que esteja na galeria
+    volta a ser candidata (`approved=False, sort_order=SPECS_AI_SORT_ORDER`) —
+    nunca apagada, para o operador poder promover de volta depois.
+
+    Sem ficha na galeria, o alvo entra DEPOIS da ultima imagem publicada, nunca
+    por cima de uma foto ja aprovada. Com a galeria vazia, entra logo apos a
+    posicao reservada a capa: mandar a ficha para o 0 violaria
+    `PROMOTABLE_COVER_KINDS`.
+
+    Rebaixa a LISTA inteira, e nao "a ficha atual" via `scalar_one_or_none`,
+    pelo mesmo motivo de `promote_cover`: duas promocoes concorrentes podem
+    deixar duas linhas empatadas no mesmo slot, e `publish_service` ordena por
+    `sort_order` sem desempate — a ficha publicada viraria sorteio. Rebaixar
+    tudo faz a proxima promocao se autocurar em vez de estourar
+    `MultipleResultsFound`.
+
+    Idempotente: promover quem ja esta no slot, sem duplicatas a rebaixar, nao
+    escreve no banco.
+
+    Herda a mesma LIMITACAO CONHECIDA de `promote_cover`: `with_for_update()`
+    so serializa disputas pelas MESMAS linhas, entao duas promocoes simultaneas
+    de alvos diferentes ainda podem empatar. Janela de milissegundos, exige
+    acao humana concorrente no mesmo anuncio, e o estado se autocura.
+    """
+    target = (
+        await db.execute(
+            select(ListingImage)
+            .options(defer(ListingImage.image_bytes))
+            .where(
+                ListingImage.id == image_id,
+                ListingImage.listing_id == listing.id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+
+    if target is None:
+        raise HTTPException(status_code=404, detail="Imagem nao encontrada neste anuncio")
+
+    if target.kind not in PROMOTABLE_SPECS_KINDS:
+        raise HTTPException(
+            status_code=422,
+            detail="Somente o card de ficha tecnica ou a variante gerada por IA podem ocupar o slot de ficha",
+        )
+
+    ocupantes = (
+        await db.execute(
+            select(ListingImage)
+            .options(defer(ListingImage.image_bytes))
+            .where(
+                ListingImage.listing_id == listing.id,
+                ListingImage.kind.in_(PROMOTABLE_SPECS_KINDS),
+                ListingImage.sort_order < CANDIDATE_SORT_ORDER_FLOOR,
+                ListingImage.id != target.id,
+            )
+            .order_by(ListingImage.sort_order, ListingImage.id)
+            .with_for_update()
+        )
+    ).scalars().all()
+
+    # Guard redundante de proposito, como em `promote_cover`: a query ja filtra,
+    # mas rebaixar despublica uma imagem, entao a regra e conferida onde a
+    # escrita acontece, e nao so onde as linhas sao lidas.
+    rebaixaveis = [o for o in ocupantes if o.kind in PROMOTABLE_SPECS_KINDS]
+
+    if rebaixaveis:
+        slot = min(o.sort_order for o in rebaixaveis)
+    elif target.sort_order < CANDIDATE_SORT_ORDER_FLOOR:
+        # Ja esta na galeria e nao ha outra ficha: fica onde esta.
+        slot = target.sort_order
+    else:
+        ultimo = (
+            await db.execute(
+                select(func.max(ListingImage.sort_order)).where(
+                    ListingImage.listing_id == listing.id,
+                    ListingImage.approved.is_(True),
+                    ListingImage.sort_order < CANDIDATE_SORT_ORDER_FLOOR,
+                )
+            )
+        ).scalars().all()
+        maior = ultimo[0] if ultimo else None
+        slot = COVER_SORT_ORDER + 1 if maior is None else maior + 1
+
+    changed = False
+    rebaixados = []
+
+    for ocupante in rebaixaveis:
+        ocupante.approved = False
+        ocupante.sort_order = SPECS_AI_SORT_ORDER
+        rebaixados.append(ocupante.id)
+        changed = True
+
+    if target.sort_order != slot or not target.approved:
+        target.approved = True
+        target.sort_order = slot
+        changed = True
+
+    if not changed:
+        return
+
+    await db.commit()
+    logger.info(
+        "specs_promote listing_id=%s promoted_id=%s slot=%s demoted_ids=%s",
+        listing.id,
+        target.id,
+        slot,
+        rebaixados,
+    )
